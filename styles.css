@@ -389,10 +389,17 @@ ul { padding: 0; list-style: none; }
 
 .tag-list { display: grid; gap: 8px; }
 .tag-row {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 8px;
   padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;
   background: var(--card); box-shadow: var(--shadow); cursor: pointer;
 }
+.tag-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.tag-row.active .tag-name { color: var(--accent); }
+.tag-caret {
+  width: 16px; flex: 0 0 16px; text-align: center;
+  color: var(--ink-3); font-size: 11px; line-height: 1;
+}
+.tag-caret.blank { opacity: 0; }
 .tag-emoji { width: 30px; text-align: center; font-size: 19px; }
 .tag-name { flex: 1; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-count { font-size: 12px; color: var(--ink-3); }
@@ -516,12 +523,54 @@ ul { padding: 0; list-style: none; }
   display: flex; flex-direction: column; justify-content: center; gap: 3px;
 }
 .loc-tile b { font-size: 13.5px; font-weight: 650; line-height: 1.35; word-break: break-all; }
-.loc-tile span { font-size: 11px; color: var(--ink-3); }
+.loc-tile span {
+  font-size: 11px; color: var(--ink-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
 .loc-tile.on { border-color: var(--accent); background: var(--accent-soft); }
 .loc-tile i {
   position: absolute; top: 6px; right: 8px;
   font-style: normal; font-size: 12px; color: var(--accent); font-weight: 700;
 }
+
+/* ---------- 详情页（紧凑版） ---------- */
+.gallery.compact { height: 168px; background: var(--bg-soft); }
+.gallery.compact .gallery-item {
+  width: 100%; flex: 0 0 100%; height: 168px; aspect-ratio: auto;
+  background-size: contain; background-repeat: no-repeat;
+}
+.gallery.compact.empty { aspect-ratio: auto; height: 168px; font-size: 44px; }
+
+.detail-head { padding: 12px 16px 2px; }
+.detail-head h2 { font-size: 19px; line-height: 1.35; word-break: break-word; }
+.detail-head .pills { margin-top: 8px; }
+.detail-loc { margin-top: 8px; font-size: 12px; color: var(--ink-3); }
+
+.detail-actions {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px 12px;
+}
+.qty-mini {
+  display: flex; align-items: center;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); overflow: hidden;
+}
+.qty-mini button {
+  width: 38px; height: 34px; font-size: 18px; line-height: 1;
+  color: var(--ink); display: grid; place-items: center;
+}
+.qty-mini button:active { background: var(--accent-soft); }
+.qty-mini span { min-width: 42px; text-align: center; font-weight: 650; font-size: 14px; }
+
+.loan-chip {
+  height: 34px; padding: 0 14px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card);
+  font-size: 12.5px; color: var(--ink-2);
+}
+.loan-chip.lent { border-color: var(--warm); color: var(--warm); background: rgba(194, 112, 61, 0.1); }
+
+.detail-more { padding: 0 16px 24px; }
+.loan-line { margin-top: 10px; font-size: 13px; color: var(--ink-2); }
 
 /* ---------- 书架视图 ---------- */
 .shelf-block { margin-bottom: 20px; }

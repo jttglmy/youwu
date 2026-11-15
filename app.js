@@ -85,7 +85,9 @@ var S = {
   lsMode: false,
   recentLocs: [],
   autoCut: false,
-  viewMode: 'grid'
+  viewMode: 'grid',
+  expanded: {},
+  suppressClick: false
 };
 
 var urlCache = {};
@@ -103,7 +105,7 @@ function boot() {
     .then(reload)
     .then(loadRecentLocs)
     .then(loadPrefs)
-    .then(migrateShapes)
+    .then(migrateStructure)
     .then(function () {
       S.ready = true;
       S.lsMode = DB.mode() === 'ls';
@@ -129,6 +131,7 @@ function bind() {
   document.addEventListener('change', onDocChange);
   var q = $('#q');
   if (q) q.addEventListener('input', onSearch);
+  bindLongPress();
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('#dialog').hidden) { dialogCancel(); return; }
@@ -221,15 +224,64 @@ function savePrefs() {
   DB.put('meta', { key: 'settings', autoCut: !!S.autoCut, viewMode: S.viewMode }).catch(function () { });
 }
 
-/* 老数据没有 shape 的，按名字猜一个并写回 */
-function migrateShapes() {
+/* 老数据没有 shape / parentId 的，补上 */
+function migrateStructure() {
   var jobs = [];
   S.cats.forEach(function (c) {
-    if (c.shape) return;
-    c.shape = guessShape(c.name);
-    jobs.push(DB.put('categories', c));
+    var dirty = false;
+    if (!c.shape) { c.shape = guessShape(c.name); dirty = true; }
+    if (c.parentId == null) { c.parentId = ''; dirty = true; }
+    if (dirty) jobs.push(DB.put('categories', c));
+  });
+  S.locs.forEach(function (l) {
+    if (l.parentId == null) { l.parentId = ''; jobs.push(DB.put('locations', l)); }
   });
   return jobs.length ? Promise.all(jobs) : null;
+}
+
+/* ---- 树结构工具 ---- */
+
+function childrenOf(parentId, mode) {
+  var list = mode === 'cat' ? S.cats : S.locs;
+  return list.filter(function (x) { return (x.parentId || '') === (parentId || ''); })
+    .sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+}
+
+function subtreeOf(id, mode) {
+  var list = mode === 'cat' ? S.cats : S.locs;
+  var out = [id];
+  var stack = [id];
+  while (stack.length) {
+    var cur = stack.pop();
+    list.forEach(function (x) {
+      if ((x.parentId || '') === cur && out.indexOf(x.id) < 0) { out.push(x.id); stack.push(x.id); }
+    });
+  }
+  return out;
+}
+
+function nodeOf(id, mode) {
+  var list = mode === 'cat' ? S.cats : S.locs;
+  return list.filter(function (x) { return x.id === id; })[0] || null;
+}
+
+function pathOf(id, mode) {
+  var parts = [];
+  var cur = nodeOf(id, mode);
+  var guard = 0;
+  while (cur && guard < 20) {
+    parts.unshift(cur.name);
+    cur = cur.parentId ? nodeOf(cur.parentId, mode) : null;
+    guard++;
+  }
+  return parts.join(' › ');
+}
+
+function countItemsUnder(id, mode, counts) {
+  var ids = subtreeOf(id, mode);
+  var n = 0;
+  ids.forEach(function (x) { n += (counts[x] || 0); });
+  return n;
 }
 
 function locName(id) {
@@ -289,11 +341,11 @@ function filteredItems() {
   var list = S.items.filter(function (it) {
     if (S.cat !== 'all') {
       if (S.cat === 'none') { if (it.categoryId) return false; }
-      else if (it.categoryId !== S.cat) return false;
+      else if (subtreeOf(S.cat, 'cat').indexOf(it.categoryId) < 0) return false;
     }
     if (S.loc !== 'all') {
       if (S.loc === 'none') { if (it.locationId) return false; }
-      else if (it.locationId !== S.loc) return false;
+      else if (subtreeOf(S.loc, 'loc').indexOf(it.locationId) < 0) return false;
     }
     if (S.tag !== 'all') {
       if (tagsOf(it).indexOf(S.tag) < 0) return false;
@@ -679,11 +731,10 @@ function recentHTML(it) {
 
 function tagsHTML() {
   var mode = S.tagMode;
-  var list = mode === 'cat' ? S.cats : S.locs;
   var counts = {};
   S.items.forEach(function (i) {
     var k = mode === 'cat' ? i.categoryId : i.locationId;
-    counts[k] = (counts[k] || 0) + 1;
+    if (k) counts[k] = (counts[k] || 0) + 1;
   });
 
   var h = '<div class="seg">' +
@@ -691,20 +742,53 @@ function tagsHTML() {
     '<button class="seg-btn' + (mode === 'loc' ? ' on' : '') + '" data-act="tag-mode" data-mode="loc">位置</button>' +
     '</div>';
 
+  h += '<p class="hint">点一下查看这类东西；长按修改名称、图标和上级。</p>';
+
   h += '<div class="tag-list">';
-  list.forEach(function (t) {
-    h += '<div class="tag-row" data-act="edit-tag" data-id="' + t.id + '">' +
-      '<span class="tag-emoji">' + esc(t.emoji || (mode === 'cat' ? '🏷️' : '📍')) + '</span>' +
-      '<span class="tag-name">' + esc(t.name) + '</span>' +
-      '<span class="tag-count">' + (counts[t.id] || 0) + '</span>' +
-      '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" aria-label="删除">✕</button>' +
-      '</div>';
-  });
-  if (!list.length) h += '<p class="hint">还没有' + (mode === 'cat' ? '分类' : '位置') + '，点下面新建一个。</p>';
+  var roots = childrenOf('', mode);
+  if (!roots.length) h += '<p class="hint">还没有' + (mode === 'cat' ? '分类' : '位置') + '，点下面新建一个。</p>';
+  roots.forEach(function (t) { h += tagRowHTML(t, 0, mode, counts); });
   h += '</div>';
 
   h += '<button class="btn ghost block" data-act="new-tag">＋ 新建' + (mode === 'cat' ? '分类' : '位置') + '</button>';
   return h;
+}
+
+function tagRowHTML(t, depth, mode, counts) {
+  var kids = childrenOf(t.id, mode);
+  var key = mode + ':' + t.id;
+  var open = !!S.expanded[key];
+  var activeId = mode === 'cat' ? S.cat : S.loc;
+
+  var h = '<div class="tag-row' + (t.id === activeId ? ' active' : '') + '"' +
+    ' data-longpress="1" data-kind="' + mode + '" data-id="' + t.id + '"' +
+    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + mode + '"' +
+    ' style="padding-left:' + (12 + depth * 18) + 'px">';
+
+  h += '<span class="tag-caret' + (kids.length ? '' : ' blank') + '"' +
+    (kids.length ? ' data-act="toggle-node" data-key="' + key + '"' : '') + '>' +
+    (kids.length ? (open ? '▾' : '▸') : '') + '</span>';
+
+  h += '<span class="tag-emoji">' + esc(t.emoji || (mode === 'cat' ? '🏷️' : '📍')) + '</span>';
+  h += '<span class="tag-name">' + esc(t.name) + '</span>';
+  h += '<span class="tag-count">' + countItemsUnder(t.id, mode, counts) + '</span>';
+  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '">✕</button>';
+  h += '</div>';
+
+  if (open) {
+    kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, mode, counts); });
+  }
+  return h;
+}
+
+function parentOptions(mode, excludeId) {
+  var list = mode === 'cat' ? S.cats : S.locs;
+  var banned = excludeId ? subtreeOf(excludeId, mode) : [];
+  var opts = [['', '（顶层）']];
+  list.filter(function (x) { return banned.indexOf(x.id) < 0; })
+    .sort(function (a, b) { return pathOf(a.id, mode).localeCompare(pathOf(b.id, mode), 'zh-CN'); })
+    .forEach(function (x) { opts.push([x.id, pathOf(x.id, mode)]); });
+  return opts;
 }
 
 /* ---------------- 设置 ---------------- */
@@ -771,6 +855,7 @@ function openDetail(id) {
   var cat = S.cats.filter(function (c) { return c.id === it.categoryId; })[0];
   var loc = S.locs.filter(function (l) { return l.id === it.locationId; })[0];
   var photos = it.photoIds || [];
+  var tg = tagsOf(it);
 
   var h = '';
   h += '<div class="detail-bar">' +
@@ -782,36 +867,38 @@ function openDetail(id) {
   h += '<div class="detail-scroll">';
 
   if (photos.length) {
-    h += '<div class="gallery shape-' + catShape(it.categoryId) + '">' + photos.map(function (pid) {
+    h += '<div class="gallery compact shape-' + catShape(it.categoryId) + '">' + photos.map(function (pid) {
       return '<div class="gallery-item" data-gphoto="' + pid + '"></div>';
     }).join('') + '</div>';
   } else {
-    h += '<div class="gallery empty">' + esc(cat && cat.emoji ? cat.emoji : '📦') + '</div>';
+    h += '<div class="gallery compact empty">' + esc(cat && cat.emoji ? cat.emoji : '📦') + '</div>';
   }
 
-  h += '<div class="detail-main">';
+  h += '<div class="detail-head">';
   h += '<h2>' + esc(it.name) + '</h2>';
   h += '<div class="pills">' +
-    '<span class="pill">' + esc(cat ? ((cat.emoji ? cat.emoji + ' ' : '') + cat.name) : '未分类') + '</span>' +
-    '<span class="pill">' + esc(loc ? loc.name : '未记位置') + '</span>' +
-    (it.loan ? '<span class="pill warn">借出中</span>' : '') +
+    '<span class="pill">' + esc(cat ? ((cat.emoji ? cat.emoji + ' ' : '') + cat.name) : '未分类') + '</span>';
+  tg.forEach(function (t) {
+    h += '<button class="pill tag-pill" data-act="filter-tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>';
+  });
+  h += '</div>';
+  if (loc) h += '<p class="detail-loc">📍 ' + esc(loc.name) + '</p>';
+  h += '</div>';
+
+  h += '<div class="detail-actions">' +
+    '<div class="qty-mini">' +
+    '<button data-act="qty-dec" data-id="' + it.id + '" aria-label="减一件">−</button>' +
+    '<span>' + qtyOf(it) + '</span>' +
+    '<button data-act="qty-inc" data-id="' + it.id + '" aria-label="加一件">＋</button>' +
+    '</div>' +
+    '<button class="loan-chip' + (it.loan ? ' lent' : '') + '" data-act="' + (it.loan ? 'return' : 'lend') + '" data-id="' + it.id + '">' +
+    (it.loan ? '借出 ' + daysOut(it) + ' 天' : '在库') +
+    '</button>' +
     '</div>';
 
-  h += '<div class="qty-row">' +
-    '<button class="qbtn" data-act="qty-dec" data-id="' + it.id + '" aria-label="减一件">−</button>' +
-    '<span class="qnum">' + qtyOf(it) + ' 件</span>' +
-    '<button class="qbtn" data-act="qty-inc" data-id="' + it.id + '" aria-label="加一件">＋</button>' +
-    '</div>';
+  h += '<button class="more-toggle" data-act="toggle-detail-more">更多信息（价格 / 日期 / 备注 / 借出记录）</button>';
 
-  var tg = tagsOf(it);
-  if (tg.length) {
-    h += '<div class="pills">';
-    tg.forEach(function (t) {
-      h += '<button class="pill tag-pill" data-act="filter-tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>';
-    });
-    h += '</div>';
-  }
-
+  h += '<div id="detailMore" class="detail-more" hidden>';
   h += '<div class="fields">';
   if (num(it.price) > 0) {
     h += '<div><dt>单价</dt><dd>' + money(it.price) + '</dd></div>';
@@ -823,20 +910,10 @@ function openDetail(id) {
 
   if (it.note) h += '<p class="note">' + esc(it.note) + '</p>';
 
-  h += '<div class="loan-card">';
   if (it.loan) {
-    var dOut = daysOut(it);
-    h += '<div class="loan-head"><b>已借给 ' + esc(it.loan.to) + '</b>' +
-      (dOut >= 30 ? '<span class="pill warn">' + dOut + ' 天未还</span>' : '') + '</div>';
-    h += '<div class="loan-body">借出日期：' + esc(it.loan.since || '—') +
-      (dOut > 0 ? '（' + dOut + ' 天）' : '') +
-      (it.loan.note ? '<br>备注：' + esc(it.loan.note) : '') + '</div>';
-    h += '<button class="btn solid block" data-act="return" data-id="' + it.id + '">记一笔归还</button>';
-  } else {
-    h += '<div class="loan-head"><b>在库</b></div>';
-    h += '<button class="btn ghost block" data-act="lend" data-id="' + it.id + '">借出去了？记一笔</button>';
+    h += '<p class="loan-line">已借给 <b>' + esc(it.loan.to) + '</b>，' + esc(it.loan.since || '—') +
+      (it.loan.note ? '　备注：' + esc(it.loan.note) : '') + '</p>';
   }
-  h += '</div>';
 
   if (it.history && it.history.length) {
     h += '<h3 class="sec">借出记录</h3><ul class="hist">';
@@ -846,9 +923,9 @@ function openDetail(id) {
     });
     h += '</ul>';
   }
+  h += '</div>';
 
-  h += '<button class="btn ghost danger block" data-act="del" data-id="' + it.id + '">删除这件东西</button>';
-  h += '</div></div>';
+  h += '</div>';
 
   var box = $('#detail');
   box.innerHTML = h;
@@ -972,6 +1049,8 @@ function editorHTML(f) {
 
   if (!f.id) {
     h += '<button type="button" class="btn solid block" data-act="save-continue">保存，继续添加下一件</button>';
+  } else {
+    h += '<button type="button" class="btn ghost danger block" data-act="del-from-editor" data-id="' + f.id + '">删除这件东西</button>';
   }
   h += '<p class="hint">照片会自动压缩，最多 9 张。</p>';
   return h;
@@ -1000,9 +1079,10 @@ function pickerHTML() {
 
   function tile(l) {
     if (!l) return '';
+    var parentPath = l.parentId ? pathOf(l.parentId, 'loc') + ' · ' : '';
     return '<button class="loc-tile' + (l.id === cur ? ' on' : '') + '" data-act="pick-loc" data-id="' + l.id + '">' +
       '<b>' + esc(l.name) + '</b>' +
-      '<span>' + (counts[l.id] || 0) + ' 件</span>' +
+      '<span>' + esc(parentPath) + (counts[l.id] || 0) + ' 件</span>' +
       (l.id === cur ? '<i>✓</i>' : '') +
       '</button>';
   }
@@ -1073,9 +1153,13 @@ function tagQuickHTML(f) {
 }
 
 function catChipsHTML(f) {
-  var h = S.cats.map(function (c) {
-    return '<button type="button" class="chip' + (f.categoryId === c.id ? ' on' : '') + '" data-act="pick-cat" data-id="' + c.id + '">' +
-      esc(c.emoji || '') + ' ' + esc(c.name) + '</button>';
+  var sorted = S.cats.slice().sort(function (a, b) {
+    return pathOf(a.id, 'cat').localeCompare(pathOf(b.id, 'cat'), 'zh-CN');
+  });
+  var h = sorted.map(function (c) {
+    var nested = !!c.parentId;
+    return '<button type="button" class="chip' + (f.categoryId === c.id ? ' on' : '') + (nested ? ' nested' : '') + '" data-act="pick-cat" data-id="' + c.id + '">' +
+      esc(c.emoji || '') + ' ' + (nested ? '↳ ' : '') + esc(c.name) + '</button>';
   }).join('');
   h += '<button type="button" class="chip dashed" data-act="new-cat-inline">＋ 新建</button>';
   return h;
@@ -1583,16 +1667,22 @@ function deleteItem(id) {
 
 /* ---------------- 分类 / 位置维护 ---------------- */
 
-function newTag() {
-  var mode = S.tagMode;
+function newTag(modeArg) {
+  var mode = modeArg || S.tagMode;
   var fields = [{
     key: 'name',
     label: '名称',
     required: true,
-    placeholder: mode === 'cat' ? '例：围巾、厨房小家电' : '例：卧室-衣柜-第三层'
+    placeholder: mode === 'cat' ? '例：外套、厨房小家电' : '例：衣柜、第三层'
+  }, {
+    key: 'parentId',
+    label: '放在哪个下面',
+    type: 'select',
+    options: parentOptions(mode, ''),
+    value: ''
   }];
   if (mode === 'cat') {
-    fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: guessShape('') });
+    fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: 'square' });
   }
 
   askForm({
@@ -1603,25 +1693,34 @@ function newTag() {
     okText: '创建'
   }).then(function (r) {
     if (!r) return;
-    var rec = { id: uid(), name: r.name, order: mode === 'cat' ? S.cats.length : S.locs.length, createdAt: Date.now() };
+    var rec = {
+      id: uid(),
+      name: r.name,
+      parentId: r.parentId || '',
+      order: mode === 'cat' ? S.cats.length : S.locs.length,
+      createdAt: Date.now()
+    };
     if (mode === 'cat') {
       rec.emoji = r.emoji || '📦';
       rec.shape = r.shape || guessShape(r.name);
     }
     return DB.put(mode === 'cat' ? 'categories' : 'locations', rec).then(reload).then(function () {
+      if (rec.parentId) S.expanded[mode + ':' + rec.parentId] = true;
       render();
       toast('已创建');
     });
   }).catch(fatal);
 }
 
-function editTag(id) {
-  var mode = S.tagMode;
-  var list = mode === 'cat' ? S.cats : S.locs;
-  var t = list.filter(function (x) { return x.id === id; })[0];
+function editTag(id, modeArg) {
+  var mode = modeArg || S.tagMode;
+  var t = nodeOf(id, mode);
   if (!t) return;
 
-  var fields = [{ key: 'name', label: '名称', value: t.name, required: true }];
+  var fields = [
+    { key: 'name', label: '名称', value: t.name, required: true },
+    { key: 'parentId', label: '上级', type: 'select', options: parentOptions(mode, id), value: t.parentId || '' }
+  ];
   if (mode === 'cat') {
     fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: t.shape || 'square' });
   }
@@ -1635,6 +1734,7 @@ function editTag(id) {
   }).then(function (r) {
     if (!r) return;
     t.name = r.name;
+    t.parentId = r.parentId || '';
     if (mode === 'cat' && r.emoji) t.emoji = r.emoji;
     if (mode === 'cat' && r.shape) t.shape = r.shape;
     return DB.put(mode === 'cat' ? 'categories' : 'locations', t).then(reload).then(function () {
@@ -1644,31 +1744,43 @@ function editTag(id) {
   }).catch(fatal);
 }
 
-function delTag(id) {
-  var mode = S.tagMode;
-  var list = mode === 'cat' ? S.cats : S.locs;
-  var t = list.filter(function (x) { return x.id === id; })[0];
+function delTag(id, modeArg) {
+  var mode = modeArg || S.tagMode;
+  var t = nodeOf(id, mode);
   if (!t) return;
+  var kids = childrenOf(id, mode);
 
   confirmDialog({
     title: '删除「' + t.name + '」？',
-    desc: mode === 'cat'
+    desc: (mode === 'cat'
       ? '这个分类下的物品不会删除，会变成「未分类」。'
-      : '用了这个位置的物品不会删除，会变成「未记位置」。',
+      : '用了这个位置的物品不会删除，会变成「未记位置」。') +
+      (kids.length ? '它的 ' + kids.length + ' 个子' + (mode === 'cat' ? '分类' : '位置') + '会移到上一层。' : ''),
     okText: '删除',
     danger: true
   }).then(function (ok) {
     if (!ok) return;
+    var store = mode === 'cat' ? 'categories' : 'locations';
+    var key = mode === 'cat' ? 'categoryId' : 'locationId';
     var chain = Promise.resolve();
+
+    kids.forEach(function (k) {
+      k.parentId = t.parentId || '';
+      chain = chain.then(function () { return DB.put(store, k); });
+    });
+
     S.items.forEach(function (it) {
-      var key = mode === 'cat' ? 'categoryId' : 'locationId';
       if (it[key] !== id) return;
       it[key] = '';
       it.updatedAt = Date.now();
       chain = chain.then(function () { return DB.put('items', it); });
     });
-    chain = chain.then(function () { return DB.del(mode === 'cat' ? 'categories' : 'locations', id); });
+
+    chain = chain.then(function () { return DB.del(store, id); });
+
     return chain.then(reload).then(function () {
+      if (mode === 'cat' && S.cat === id) S.cat = 'all';
+      if (mode === 'loc' && S.loc === id) S.loc = 'all';
       render();
       toast('已删除');
     });
@@ -1881,6 +1993,7 @@ async function mergeJSON(data) {
         if (hit.name !== c.name) { hit.name = c.name; changed = true; }
         if (c.emoji && c.emoji !== hit.emoji) { hit.emoji = c.emoji; changed = true; }
         if (c.shape && c.shape !== hit.shape) { hit.shape = c.shape; changed = true; }
+        if ((c.parentId || '') !== (hit.parentId || '')) { hit.parentId = c.parentId || ''; changed = true; }
         if (changed) await DB.put('categories', hit);
       } else {
         var nc = {
@@ -1888,6 +2001,7 @@ async function mergeJSON(data) {
           name: c.name,
           emoji: c.emoji || '📦',
           shape: c.shape || guessShape(c.name),
+          parentId: c.parentId || '',
           order: c.order == null ? S.cats.length : c.order,
           createdAt: c.createdAt || Date.now()
         };
@@ -1912,14 +2026,15 @@ async function mergeJSON(data) {
       }
       if (hitL) {
         locMap[l.id] = hitL.id;
-        if (hitL.name !== l.name) {
-          hitL.name = l.name;
-          await DB.put('locations', hitL);
-        }
+        var lchanged = false;
+        if (hitL.name !== l.name) { hitL.name = l.name; lchanged = true; }
+        if ((l.parentId || '') !== (hitL.parentId || '')) { hitL.parentId = l.parentId || ''; lchanged = true; }
+        if (lchanged) await DB.put('locations', hitL);
       } else {
         var nl = {
           id: l.id,
           name: l.name,
+          parentId: l.parentId || '',
           order: l.order == null ? S.locs.length : l.order,
           createdAt: l.createdAt || Date.now()
         };
@@ -2448,7 +2563,46 @@ function onDocChange(e) {
   }
 }
 
+/* 长按（手机上）或右键（电脑上）编辑节点 */
+function bindLongPress() {
+  var timer = null;
+
+  document.addEventListener('touchstart', function (e) {
+    var row = e.target.closest('[data-longpress]');
+    if (!row) return;
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      timer = null;
+      S.suppressClick = true;
+      var kind = row.getAttribute('data-kind');
+      var id = row.getAttribute('data-id');
+      if (kind === 'cat') editTag(id, 'cat'); else editTag(id, 'loc');
+    }, 420);
+  }, { passive: true });
+
+  document.addEventListener('touchmove', function () {
+    clearTimeout(timer);
+    timer = null;
+  }, { passive: true });
+
+  document.addEventListener('touchend', function () {
+    clearTimeout(timer);
+    timer = null;
+  }, { passive: true });
+
+  document.addEventListener('contextmenu', function (e) {
+    var row = e.target.closest('[data-longpress]');
+    if (!row) return;
+    e.preventDefault();
+    var kind = row.getAttribute('data-kind');
+    var id = row.getAttribute('data-id');
+    if (kind === 'cat') editTag(id, 'cat'); else editTag(id, 'loc');
+  });
+}
+
 function onDocClick(e) {
+  if (S.suppressClick) { S.suppressClick = false; return; }
+
   var emojiBtn = e.target.closest('[data-emoji]');
   if (emojiBtn) { pickEmoji(emojiBtn); return; }
 
@@ -2479,6 +2633,22 @@ function onDocClick(e) {
     case 'new-loc-picker': newLocInline(); break;
     case 'qty-inc': changeQty(id, 1); break;
     case 'qty-dec': changeQty(id, -1); break;
+    case 'toggle-detail-more': {
+      var dm = $('#detailMore');
+      if (!dm) break;
+      dm.hidden = !dm.hidden;
+      var dmBtn = $('#detail .more-toggle');
+      if (dmBtn) {
+        dmBtn.textContent = dm.hidden
+          ? '更多信息（价格 / 日期 / 备注 / 借出记录）'
+          : '收起更多信息';
+      }
+      break;
+    }
+    case 'del-from-editor':
+      closeSheet();
+      deleteItem(el.getAttribute('data-id'));
+      break;
     case 'toggle-view':
       S.viewMode = (S.viewMode === 'shelf') ? 'grid' : 'shelf';
       savePrefs();
@@ -2494,6 +2664,22 @@ function onDocClick(e) {
     case 'filter-cat': setCatFilter(id); break;
     case 'clear-filter': clearFilter(); break;
     case 'load-more': S.page++; $('#view').innerHTML = itemsHTML(); hydrateThumbs(); break;
+    case 'go-tag': {
+      var kind = el.getAttribute('data-mode');
+      var nodeId = el.getAttribute('data-tag');
+      if (kind === 'cat') { S.cat = nodeId; S.tag = 'all'; }
+      else { S.loc = nodeId; }
+      S.tab = 'items';
+      S.page = 1;
+      render();
+      break;
+    }
+    case 'toggle-node': {
+      var k = el.getAttribute('data-key');
+      S.expanded[k] = !S.expanded[k];
+      render();
+      break;
+    }
     case 'tag-mode': S.tagMode = el.getAttribute('data-mode'); render(); break;
     case 'new-tag': newTag(); break;
     case 'edit-tag': editTag(id); break;
