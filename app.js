@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.11';
+var APP_VER = '2.12';
 
 var S = {
   tab: 'items',
@@ -89,7 +89,7 @@ var S = {
   lsMode: false,
   recentLocs: [],
   autoCut: false,
-  viewMode: 'grid',
+  viewMode: 'shelf',
   expanded: {},
   suppressUntil: 0
 };
@@ -223,12 +223,22 @@ function guessShape(name) {
 function loadPrefs() {
   return DB.get('meta', 'settings').then(function (rec) {
     S.autoCut = !!(rec && rec.autoCut);
-    S.viewMode = (rec && rec.viewMode === 'shelf') ? 'shelf' : 'grid';
+    /* 第一次升级到 2.12 时默认用家具视图；之后保留你自己的选择 */
+    if (rec && rec.viewModeDefaulted) {
+      S.viewMode = (rec.viewMode === 'grid') ? 'grid' : 'shelf';
+    } else {
+      S.viewMode = 'shelf';
+    }
   }).catch(function () { });
 }
 
 function savePrefs() {
-  DB.put('meta', { key: 'settings', autoCut: !!S.autoCut, viewMode: S.viewMode }).catch(function () { });
+  DB.put('meta', {
+    key: 'settings',
+    autoCut: !!S.autoCut,
+    viewMode: S.viewMode,
+    viewModeDefaulted: true
+  }).catch(function () { });
 }
 
 /* 老数据没有 shape / parentId 的，补上 */

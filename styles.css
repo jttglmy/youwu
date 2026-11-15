@@ -669,7 +669,7 @@ ul { padding: 0; list-style: none; }
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
   margin: 0 6px 8px;
 }
-.fur-head b { font-size: 13.5px; font-weight: 650; color: var(--ink); }
+.fur-head b { font-size: 17px; font-weight: 700; color: var(--ink); }
 .fur-head span { font-size: 11px; color: var(--ink-3); }
 .fur-body { position: relative; padding: 0 2px; }
 
