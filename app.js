@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* =========================================================
    有物 · 我的物品清单
@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.8';
+var APP_VER = '2.9';
 
 var S = {
   tab: 'items',
@@ -1188,7 +1188,7 @@ function tagRowHTML(entry, depth, mode, counts) {
   h += '<span class="tag-emoji">' + esc(kind === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
   h += '<span class="tag-name">' + esc(t.name) + '</span>';
   if (kind === 'cat' && t.parentId && !nodeOf(t.parentId, 'cat')) {
-    h += '<span class="tag-inloc">放位置里</span>';
+    h += '<span class="tag-inloc">📍 ' + esc(pathOf(t.parentId)) + '</span>';
   }
   h += '<span class="tag-count">' + countItemsUnder(t.id, kind, counts[kind] || {}) + '</span>';
   h += '<button class="tag-add" data-act="new-child" data-kind="' + kind + '" data-id="' + t.id + '" aria-label="在这里新建">＋</button>';
@@ -2303,8 +2303,10 @@ function editTag(id, modeArg) {
     if (mode === 'cat' && r.emoji) t.emoji = r.emoji;
     if (mode === 'cat' && r.shape) t.shape = r.shape;
     return DB.put(mode === 'cat' ? 'categories' : 'locations', t).then(reload).then(function () {
+      var placed = (mode === 'cat' && t.parentId && !nodeOf(t.parentId, 'cat'));
+      if (placed) S.expanded['loc:' + t.parentId] = true;
       render();
-      toast('已保存');
+      toast(placed ? '已放进「' + pathOf(t.parentId) + '」，到「位置」页展开就能看到' : '已保存');
     });
   }).catch(fatal);
 }
