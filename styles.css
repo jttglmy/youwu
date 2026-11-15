@@ -430,7 +430,6 @@ ul { padding: 0; list-style: none; }
   padding: 4px 8px 12px 38px;
   scrollbar-width: none;
 }
-.loc-items::-webkit-scrollbar { display: none; }
 .loc-item {
   flex: 0 0 auto; width: 62px;
   display: flex; flex-direction: column; align-items: center; gap: 4px;
@@ -448,6 +447,20 @@ ul { padding: 0; list-style: none; }
   font-size: 9px; color: var(--ink-2); max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 树里内嵌的家具 */
+.fur.fur-inline { margin: 2px 0 6px; }
+.fur.fur-inline .fur-row { padding: 0 2px; }
+.fur.fur-inline .fur-board { margin-bottom: 4px; }
+.fur-add .fur-photo {
+  border-style: dashed; background: var(--bg);
+  color: var(--ink-3); font-size: 22px;
+  display: grid; place-items: center;
+}
+.fur-bookshelf .fur-add .fur-photo { width: 46px; height: 84px; }
+.fur-wardrobe .fur-add .fur-photo { width: 66px; height: 84px; }
+.fur-shoerack .fur-add .fur-photo { width: 52px; height: 46px; }
+.fur-cabinet .fur-add .fur-photo { width: 56px; height: 56px; }
 .tag-count { font-size: 12px; color: var(--ink-3); }
 .tag-add {
   width: 30px; height: 30px; border-radius: 8px;

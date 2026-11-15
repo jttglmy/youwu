@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* =========================================================
    有物 · 我的物品清单
@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.10';
+var APP_VER = '2.11';
 
 var S = {
   tab: 'items',
@@ -601,8 +601,8 @@ var FUR_W_MIN = { bookshelf: 38, wardrobe: 46, shoerack: 46, cabinet: 40 };
 var FUR_W_MAX = { bookshelf: 96, wardrobe: 100, shoerack: 112, cabinet: 120 };
 
 /* 按图片真实长宽比算出显示尺寸 */
-function furSize(type, it) {
-  var h = FUR_H[type] || 64;
+function furSize(type, it, hOverride) {
+  var h = hOverride || FUR_H[type] || 64;
   var r = it.ratio || 1;
   var w = Math.round(h * r);
   w = Math.max(FUR_W_MIN[type] || 40, Math.min(FUR_W_MAX[type] || 120, w));
@@ -615,14 +615,14 @@ function furAvailWidth() {
 }
 
 /* 把物品按可用宽度切成若干排 */
-function chunkRows(type, items) {
+function chunkRows(type, items, availWidth, hOverride) {
   var rows = [];
   var cur = [];
   var curW = 0;
-  var avail = furAvailWidth();
+  var avail = availWidth || furAvailWidth();
 
   items.forEach(function (it) {
-    var size = furSize(type, it);
+    var size = furSize(type, it, hOverride);
     var add = size.w + 4;
     if (cur.length && curW + add > avail) {
       rows.push(cur);
@@ -1001,18 +1001,35 @@ function itemsStripHTML(kind, id, depth) {
   var items = nodeItems(kind, id);
   if (!items.length) return '';
 
-  var pad = 8 + (depth || 0) * 22 + 30;
-  var h = '<div class="loc-items" style="padding-left:' + pad + 'px">';
-  items.forEach(function (it) {
-    var pid = (it.photoIds || [])[0];
-    h += '<button class="loc-item" data-act="open" data-id="' + it.id + '">' +
-      '<span class="loc-thumb"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
-      (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>' +
-      '<span class="loc-name">' + esc(it.name) + '</span></button>';
+  var type;
+  if (kind === 'loc') {
+    var nm = (nodeOf(id, 'loc') || {}).name || '';
+    if (/鞋|靴/.test(nm)) type = 'shoerack';
+    else if (/书|架/.test(nm)) type = 'bookshelf';
+    else if (/衣/.test(nm)) type = 'wardrobe';
+    else if (/柜/.test(nm)) type = 'wardrobe';
+    else type = 'cabinet';
+  } else {
+    type = furnitureOf(nodeOf(id, 'cat'));
+  }
+
+  var avail = Math.max(200, furAvailWidth() - (8 + (depth || 0) * 22 + 24));
+  var rows = chunkRows(type, items, avail, 84);
+
+  var h = '<div class="fur fur-inline fur-' + type + '" style="margin-left:' + (8 + (depth || 0) * 22 + 24) + 'px">';
+  h += '<div class="fur-body">';
+  rows.forEach(function (row, ri) {
+    if (type === 'wardrobe') h += '<div class="fur-rail"></div>';
+    h += '<div class="fur-row">';
+    row.forEach(function (cell) { h += furItemHTML(cell.it, cell.size); });
+    if (ri === rows.length - 1) {
+      h += '<button class="fur-item fur-add" data-act="add-here" data-kind="' + kind + '" data-id="' + id + '">' +
+        '<span class="fur-photo fur-plus">＋</span></button>';
+    }
+    h += '</div>';
+    if (type !== 'wardrobe') h += '<div class="fur-board"></div>';
   });
-  h += '<button class="loc-item loc-add" data-act="add-here" data-kind="' + kind + '" data-id="' + id + '">' +
-    '<span class="loc-thumb loc-plus">＋</span><span class="loc-name">添加</span></button>';
-  h += '</div>';
+  h += '</div></div>';
   return h;
 }
 
