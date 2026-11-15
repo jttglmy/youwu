@@ -1,10 +1,11 @@
-const CACHE = 'youwu-v7';
+const CACHE = 'youwu-v8';
+const V = '1.7';
 const ASSETS = [
   './',
   './index.html',
-  './styles.css',
-  './app.js',
-  './db.js',
+  './styles.css?v=' + V,
+  './app.js?v=' + V,
+  './db.js?v=' + V,
   './manifest.json',
   './manifest.webmanifest',
   './icon.svg',
