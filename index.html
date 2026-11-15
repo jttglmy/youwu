@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>有物 · 我的物品清单</title>
+<meta name="description" content="把你拥有的每一件东西记下来：衣服、鞋、书、首饰、厨具。">
+<meta name="theme-color" content="#f6f2ea">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="有物">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" type="image/svg+xml" href="./icons/icon.svg">
+<link rel="apple-touch-icon" href="./icons/icon.svg">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<div id="errbar" class="errbar" hidden></div>
+<script>
+window.addEventListener('error', function (e) {
+  if (!e || !e.message) return;
+  var bar = document.getElementById('errbar');
+  if (bar) { bar.hidden = false; bar.textContent = '加载出错：' + e.message; }
+}, true);
+</script>
+
+<header class="topbar" id="topbar">
+  <div class="brand-row">
+    <div class="brand">
+      <span class="logo">物</span>
+      <div class="brand-text">
+        <h1>有物</h1>
+        <p id="brandSub">记下你拥有的东西</p>
+      </div>
+    </div>
+    <button class="icon-btn" data-act="how-install" aria-label="使用说明">?</button>
+  </div>
+  <div class="search-wrap" id="searchWrap">
+    <span class="search-icon">🔍</span>
+    <input id="q" type="search" placeholder="搜名称、备注、位置、借出人" autocomplete="off" enterkeyhint="search">
+  </div>
+</header>
+
+<main id="view" class="view"></main>
+
+<button id="fab" class="fab" data-act="add-item" aria-label="添加物品">＋</button>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab active" data-tab="items"><span class="ticon">📦</span><span>物品</span></button>
+  <button class="tab" data-tab="stats"><span class="ticon">📊</span><span>统计</span></button>
+  <button class="tab" data-tab="tags"><span class="ticon">🏷️</span><span>分类</span></button>
+  <button class="tab" data-tab="settings"><span class="ticon">⚙️</span><span>设置</span></button>
+</nav>
+
+<section id="detail" class="detail" hidden></section>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-backdrop" data-act="close-sheet"></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="物品编辑">
+    <div class="sheet-head">
+      <button class="link" data-act="close-sheet">取消</button>
+      <strong id="sheetTitle">添加物品</strong>
+      <button class="link primary" data-act="save-item">保存</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<div id="dialog" class="dialog" hidden>
+  <div class="dialog-backdrop" data-act="dlg-cancel"></div>
+  <div class="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+    <h3 id="dlgTitle"></h3>
+    <p id="dlgDesc" class="dlg-desc" hidden></p>
+    <div id="dlgBody" class="dlg-body"></div>
+    <div class="dlg-actions">
+      <button class="btn ghost" id="dlgCancel" data-act="dlg-cancel">取消</button>
+      <button class="btn solid" id="dlgOk" data-act="dlg-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="./db.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
