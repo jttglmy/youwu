@@ -260,7 +260,7 @@ ul { padding: 0; list-style: none; }
 /* ---------- 底部导航 ---------- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(3, 1fr);
   padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
   background: var(--tabbar);
   -webkit-backdrop-filter: blur(14px);
@@ -396,9 +396,13 @@ ul { padding: 0; list-style: none; }
 .tag-row.active { border-color: var(--accent); background: var(--accent-soft); }
 .tag-row.active .tag-name { color: var(--accent); }
 .tag-caret {
-  width: 16px; flex: 0 0 16px; text-align: center;
-  color: var(--ink-3); font-size: 11px; line-height: 1;
+  width: 26px; height: 26px; flex: 0 0 26px;
+  margin-left: -4px;
+  border-radius: 8px;
+  color: var(--ink-2); font-size: 12px; line-height: 1;
+  display: grid; place-items: center;
 }
+.tag-caret:not(.blank):active { background: var(--bg-soft); }
 .tag-caret.blank { opacity: 0; }
 .tag-kind {
   font-size: 10px; color: var(--ink-3);

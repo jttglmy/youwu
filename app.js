@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.2';
+var APP_VER = '2.4';
 
 var S = {
   tab: 'items',
@@ -80,6 +80,7 @@ var S = {
   loc: 'all',
   sort: 'recent',
   tag: 'all',
+  loanOnly: false,
   page: 1,
   pageSize: 60,
   form: null,
@@ -384,6 +385,7 @@ function filteredItems() {
       if (S.loc === 'none') { if (it.locationId) return false; }
       else if (subtreeOf(S.loc, 'loc').indexOf(it.locationId) < 0) return false;
     }
+    if (S.loanOnly && !it.loan) return false;
     if (S.tag !== 'all') {
       if (tagsOf(it).indexOf(S.tag) < 0) return false;
     }
@@ -410,9 +412,6 @@ function render() {
 
   if (S.tab === 'items') {
     view.innerHTML = itemsHTML();
-    hydrateThumbs();
-  } else if (S.tab === 'stats') {
-    view.innerHTML = statsHTML();
     hydrateThumbs();
   } else if (S.tab === 'tags') {
     view.innerHTML = tagsHTML();
@@ -494,6 +493,7 @@ function clearFilter() {
   S.cat = 'all';
   S.loc = 'all';
   S.tag = 'all';
+  S.loanOnly = false;
   S.page = 1;
   var q = $('#q');
   if (q) q.value = '';
@@ -517,13 +517,16 @@ function itemsHTML() {
   if (S.items.some(function (i) { return !i.categoryId; })) {
     chips.push('<button class="chip' + (S.cat === 'none' ? ' on' : '') + '" data-act="filter-cat" data-id="none">未分类</button>');
   }
+  if (lent) {
+    chips.push('<button class="chip' + (S.loanOnly ? ' on' : '') + '" data-act="filter-lent">🤝 借出中 ' + lent + '</button>');
+  }
 
   var locOpts = ['<option value="all">全部位置</option>'].concat(S.locs.map(function (l) {
     return '<option value="' + l.id + '"' + (S.loc === l.id ? ' selected' : '') + '>' + esc(l.name) + '</option>';
   })).concat(['<option value="none"' + (S.loc === 'none' ? ' selected' : '') + '>未记位置</option>']);
 
   var shown = list.slice(0, S.page * S.pageSize);
-  var hasFilter = S.q || S.cat !== 'all' || S.loc !== 'all' || S.tag !== 'all';
+  var hasFilter = S.q || S.cat !== 'all' || S.loc !== 'all' || S.tag !== 'all' || S.loanOnly;
 
   var h = '';
   h += '<section class="stat-strip">' +
@@ -937,93 +940,7 @@ function getPhotoUrl(pid, kind) {
   return inflight[key];
 }
 
-/* ---------------- 统计 ---------------- */
-
-function statsHTML() {
-  if (!S.items.length) {
-    return '<div class="empty"><p>还没有数据，先去添加几件东西吧</p><button class="btn solid" data-act="add-item">＋ 添加物品</button></div>';
-  }
-
-  var lent = S.items.filter(function (i) { return i.loan; }).length;
-
-  var groups = [];
-  S.cats.forEach(function (c) {
-    var items = S.items.filter(function (i) { return i.categoryId === c.id; });
-    if (items.length) {
-      groups.push({ name: (c.emoji ? c.emoji + ' ' : '') + c.name, n: items.length, v: sumValue(items) });
-    }
-  });
-  var unc = S.items.filter(function (i) { return !i.categoryId; });
-  if (unc.length) groups.push({ name: '未分类', n: unc.length, v: sumValue(unc) });
-  groups.sort(function (a, b) { return b.n - a.n; });
-  var maxN = 1;
-  groups.forEach(function (g) { if (g.n > maxN) maxN = g.n; });
-
-  var locGroups = [];
-  S.locs.forEach(function (l) {
-    var n = S.items.filter(function (i) { return i.locationId === l.id; }).length;
-    if (n) locGroups.push({ name: l.name, n: n });
-  });
-  var noLoc = S.items.filter(function (i) { return !i.locationId; }).length;
-  if (noLoc) locGroups.push({ name: '未记位置', n: noLoc });
-  locGroups.sort(function (a, b) { return b.n - a.n; });
-  var maxL = 1;
-  locGroups.forEach(function (g) { if (g.n > maxL) maxL = g.n; });
-
-  var h = '';
-  h += '<section class="stat-strip">' +
-    '<div><b>' + qtyTotal() + '</b><span>件物品</span></div>' +
-    '<div><b>' + S.items.length + '</b><span>条记录</span></div>' +
-    '<div><b>' + lent + '</b><span>借出中</span></div>' +
-    '<div><b>' + money(sumValue(S.items)) + '</b><span>总价值</span></div>' +
-    '</section>';
-
-  h += '<div class="block"><h3>按分类</h3><div class="bars">';
-  groups.forEach(function (g) {
-    var pct = Math.max(4, Math.round(g.n / maxN * 100));
-    h += '<div class="bar-row"><div class="bar-top"><b>' + esc(g.name) + '</b><span>' + g.n + ' 件 · ' + money(g.v) + '</span></div>' +
-      '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div></div>';
-  });
-  h += '</div></div>';
-
-  h += '<div class="block"><h3>按位置</h3><div class="bars">';
-  locGroups.forEach(function (g) {
-    var pct = Math.max(4, Math.round(g.n / maxL * 100));
-    h += '<div class="bar-row"><div class="bar-top"><b>' + esc(g.name) + '</b><span>' + g.n + ' 件</span></div>' +
-      '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div></div>';
-  });
-  h += '</div></div>';
-
-  var lentItems = S.items.filter(function (i) { return i.loan; });
-  if (lentItems.length) {
-    lentItems.sort(function (a, b) { return daysOut(b) - daysOut(a); });
-    h += '<div class="block"><h3>借出中（' + lentItems.length + '）</h3><div class="recent">';
-    lentItems.forEach(function (it) {
-      var d = daysOut(it);
-      h += '<button class="recent-item" data-act="open" data-id="' + it.id + '">' +
-        '<span class="recent-thumb">🤝</span>' +
-        '<span class="recent-text"><b>' + esc(it.name) + '</b><span>' + esc(it.loan.to) + ' · ' +
-        (d > 0 ? d + ' 天' : '今天') + '</span></span>' +
-        (d >= 30 ? '<span class="pill warn">超期</span>' : '') +
-        '</button>';
-    });
-    h += '</div></div>';
-  }
-
-  h += '<div class="block"><h3>最近添加</h3><div class="recent">' +
-    S.items.slice(0, 5).map(recentHTML).join('') + '</div></div>';
-
-  return h;
-}
-
-function recentHTML(it) {
-  var pid = (it.photoIds || [])[0];
-  return '<button class="recent-item" data-act="open" data-id="' + it.id + '">' +
-    '<span class="recent-thumb"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
-    (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>' +
-    '<span class="recent-text"><b>' + esc(it.name) + '</b><span>' + esc(locName(it.locationId)) + ' · ' + fmtDay(it.createdAt) + '</span></span>' +
-    '</button>';
-}
+/* 统计页已移除：件数/总价值保留在物品页顶部，借出中改为筛选项 */
 
 /* ---------------- 分类 / 位置 ---------------- */
 
@@ -1567,7 +1484,7 @@ function closeSheet() {
 function navListFor(it) {
   var list;
 
-  if (S.q.trim() || S.cat !== 'all') {
+  if (S.q.trim() || S.cat !== 'all' || S.loanOnly) {
     list = filteredItems();
   } else {
     list = S.items.filter(function (x) {
@@ -3105,6 +3022,12 @@ function onDocClick(e) {
     case 'new-cat-inline': newCatInline(); break;
     case 'new-loc-inline': newLocInline(); break;
     case 'filter-cat': setCatFilter(id); break;
+    case 'filter-lent':
+      S.loanOnly = !S.loanOnly;
+      S.page = 1;
+      $('#view').innerHTML = itemsHTML();
+      hydrateThumbs();
+      break;
     case 'clear-filter': clearFilter(); break;
     case 'load-more': S.page++; $('#view').innerHTML = itemsHTML(); hydrateThumbs(); break;
     case 'go-tag': {
@@ -3145,38 +3068,51 @@ function onDocClick(e) {
 }
 
 function newCatInline() {
+  var current = S.form ? S.form.categoryId : '';
   askForm({
     title: '新建分类',
-    fields: [{ key: 'name', label: '名称', required: true, placeholder: '例：围巾、厨房小家电' }],
+    fields: [
+      { key: 'name', label: '名称', required: true, placeholder: '例：围巾、厨房小家电' },
+      { key: 'parentId', label: '放在哪个下面', type: 'select', options: parentOptions('cat', ''), value: current || '' }
+    ],
     emoji: true,
     emojiValue: '📦',
     okText: '创建'
   }).then(function (r) {
     if (!r) return;
-    var cat = { id: uid(), name: r.name, emoji: r.emoji || '📦', order: S.cats.length, createdAt: Date.now() };
+    var cat = {
+      id: uid(), name: r.name, emoji: r.emoji || '📦', parentId: r.parentId || '',
+      shape: guessShape(r.name), order: S.cats.length, createdAt: Date.now()
+    };
     return DB.put('categories', cat).then(function () {
       S.cats.push(cat);
       if (S.form) S.form.categoryId = cat.id;
+      if (cat.parentId) S.expanded['cat:' + cat.parentId] = true;
       renderCatChips();
-      toast('已新建分类');
+      toast(cat.parentId ? '已新建分类，挂在上级下面' : '已新建分类');
     });
   }).catch(fatal);
 }
 
 function newLocInline() {
+  var current = S.form ? S.form.locationId : '';
   askForm({
     title: '新建位置',
-    fields: [{ key: 'name', label: '名称', required: true, placeholder: '例：卧室-衣柜-第三层' }],
+    fields: [
+      { key: 'name', label: '名称', required: true, placeholder: '例：衣柜、第三层' },
+      { key: 'parentId', label: '放在哪个下面', type: 'select', options: parentOptions('loc', ''), value: current || '' }
+    ],
     okText: '创建'
   }).then(function (r) {
     if (!r) return;
-    var loc = { id: uid(), name: r.name, order: S.locs.length, createdAt: Date.now() };
+    var loc = { id: uid(), name: r.name, parentId: r.parentId || '', order: S.locs.length, createdAt: Date.now() };
     return DB.put('locations', loc).then(function () {
       S.locs.push(loc);
       if (S.form) S.form.locationId = loc.id;
+      if (loc.parentId) S.expanded['loc:' + loc.parentId] = true;
       updateLocBtn();
       if (!$('#picker').hidden) $('#picker').innerHTML = pickerHTML();
-      toast('已新建位置');
+      toast(loc.parentId ? '已新建位置，挂在上级下面' : '已新建位置');
     });
   }).catch(fatal);
 }
