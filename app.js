@@ -67,6 +67,8 @@ var S = {
   q: '',
   cat: 'all',
   loc: 'all',
+  sort: 'recent',
+  tag: 'all',
   page: 1,
   pageSize: 60,
   form: null,
@@ -193,9 +195,48 @@ function sumValue(items) {
   return items.reduce(function (s, i) { return s + num(i.price) * qtyOf(i); }, 0);
 }
 
+/* 借出天数，未借出返回 0 */
+function daysOut(it) {
+  if (!it || !it.loan || !it.loan.since) return 0;
+  var t = Date.parse(it.loan.since);
+  if (!t) return 0;
+  var d = Math.floor((Date.now() - t) / 86400000);
+  return d > 0 ? d : 0;
+}
+
+function tagsOf(it) {
+  return (it && it.tags && it.tags.length) ? it.tags : [];
+}
+
+/* 收集所有用过的标签 */
+function collectTags() {
+  var seen = {};
+  var out = [];
+  S.items.forEach(function (it) {
+    tagsOf(it).forEach(function (t) {
+      if (!seen[t]) { seen[t] = 1; out.push(t); }
+    });
+  });
+  out.sort(function (a, b) { return a.localeCompare(b, 'zh-CN'); });
+  return out;
+}
+
+function sortComparator(mode) {
+  if (mode === 'name') {
+    return function (a, b) { return String(a.name).localeCompare(String(b.name), 'zh-CN'); };
+  }
+  if (mode === 'price') {
+    return function (a, b) { return num(b.price) * qtyOf(b) - num(a.price) * qtyOf(a); };
+  }
+  if (mode === 'qty') {
+    return function (a, b) { return qtyOf(b) - qtyOf(a); };
+  }
+  return function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); };
+}
+
 function filteredItems() {
   var q = S.q.trim().toLowerCase();
-  return S.items.filter(function (it) {
+  var list = S.items.filter(function (it) {
     if (S.cat !== 'all') {
       if (S.cat === 'none') { if (it.categoryId) return false; }
       else if (it.categoryId !== S.cat) return false;
@@ -204,11 +245,17 @@ function filteredItems() {
       if (S.loc === 'none') { if (it.locationId) return false; }
       else if (it.locationId !== S.loc) return false;
     }
+    if (S.tag !== 'all') {
+      if (tagsOf(it).indexOf(S.tag) < 0) return false;
+    }
     if (!q) return true;
-    var hay = [it.name, it.note, catName(it.categoryId), locName(it.locationId), it.loan ? it.loan.to : '']
+    var hay = [it.name, it.note, catName(it.categoryId), locName(it.locationId),
+      it.loan ? it.loan.to : '', tagsOf(it).join(' ')]
       .filter(Boolean).join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
   });
+  list.sort(sortComparator(S.sort));
+  return list;
 }
 
 /* ---------------- 渲染 ---------------- */
@@ -272,10 +319,41 @@ function setCatFilter(id) {
   hydrateThumbs();
 }
 
+function changeQty(id, delta) {
+  var it = findItem(id);
+  if (!it) return;
+  var q = qtyOf(it) + delta;
+  if (q < 1) { toast('已经只剩 1 件了'); return; }
+  it.qty = q;
+  it.updatedAt = Date.now();
+  DB.put('items', it).then(reload).then(function () {
+    if (S.current === it.id && !$('#detail').hidden) openDetail(it.id);
+    render();
+    toast(delta > 0 ? '加到 ' + q + ' 件' : '还剩 ' + q + ' 件');
+  }).catch(fatal);
+}
+
+function setTagFilter(tag) {
+  S.tag = tag || 'all';
+  S.page = 1;
+  if (S.tab !== 'items') { S.tab = 'items'; render(); return; }
+  $('#view').innerHTML = itemsHTML();
+  hydrateThumbs();
+}
+
+function appendQuickTag(tag) {
+  var input = $('#f-tags');
+  if (!input) return;
+  var cur = parseTags(input.value);
+  if (cur.indexOf(tag) < 0) cur.push(tag);
+  input.value = cur.join(', ');
+}
+
 function clearFilter() {
   S.q = '';
   S.cat = 'all';
   S.loc = 'all';
+  S.tag = 'all';
   S.page = 1;
   var q = $('#q');
   if (q) q.value = '';
@@ -305,7 +383,7 @@ function itemsHTML() {
   })).concat(['<option value="none"' + (S.loc === 'none' ? ' selected' : '') + '>未记位置</option>']);
 
   var shown = list.slice(0, S.page * S.pageSize);
-  var hasFilter = S.q || S.cat !== 'all' || S.loc !== 'all';
+  var hasFilter = S.q || S.cat !== 'all' || S.loc !== 'all' || S.tag !== 'all';
 
   var h = '';
   h += '<section class="stat-strip">' +
@@ -317,7 +395,26 @@ function itemsHTML() {
 
   h += '<div class="chip-row">' + chips.join('') + '</div>';
 
+  var tagList = collectTags();
+  if (tagList.length) {
+    var tagChips = ['<button class="chip mini' + (S.tag === 'all' ? ' on' : '') + '" data-act="filter-tag" data-tag="all">全部标签</button>'];
+    tagList.forEach(function (t) {
+      tagChips.push('<button class="chip mini' + (S.tag === t ? ' on' : '') + '" data-act="filter-tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>');
+    });
+    h += '<div class="chip-row tag-chips">' + tagChips.join('') + '</div>';
+  }
+
+  var sortOpts = [
+    ['recent', '最近添加'],
+    ['name', '按名称'],
+    ['price', '按价值'],
+    ['qty', '按数量']
+  ].map(function (o) {
+    return '<option value="' + o[0] + '"' + (S.sort === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+  }).join('');
+
   h += '<div class="filter-row"><select id="locFilter">' + locOpts.join('') + '</select>' +
+    '<select id="sortSel" aria-label="排序">' + sortOpts + '</select>' +
     '<span class="result-count">' + list.length + ' 条</span>' +
     (hasFilter ? '<button class="link small" data-act="clear-filter">清除</button>' : '') + '</div>';
 
@@ -357,7 +454,10 @@ function cardHTML(it) {
     '<div class="card-name">' + esc(it.name) + '</div>' +
     '<div class="card-meta">' + esc(locName(it.locationId)) + (qty > 1 ? ' · ' + qty + '件' : '') + '</div>' +
     '</div>';
-  if (it.loan) h += '<span class="badge-lent">借出</span>';
+  if (it.loan) {
+    var d = daysOut(it);
+    h += '<span class="badge-lent' + (d >= 30 ? ' over' : '') + '">借出' + (d > 0 ? d + '天' : '') + '</span>';
+  }
   h += '</button>';
   return h;
 }
@@ -449,6 +549,22 @@ function statsHTML() {
       '<div class="bar-track"><div class="bar-fill" style="width:' + pct + '%"></div></div></div>';
   });
   h += '</div></div>';
+
+  var lentItems = S.items.filter(function (i) { return i.loan; });
+  if (lentItems.length) {
+    lentItems.sort(function (a, b) { return daysOut(b) - daysOut(a); });
+    h += '<div class="block"><h3>借出中（' + lentItems.length + '）</h3><div class="recent">';
+    lentItems.forEach(function (it) {
+      var d = daysOut(it);
+      h += '<button class="recent-item" data-act="open" data-id="' + it.id + '">' +
+        '<span class="recent-thumb">🤝</span>' +
+        '<span class="recent-text"><b>' + esc(it.name) + '</b><span>' + esc(it.loan.to) + ' · ' +
+        (d > 0 ? d + ' 天' : '今天') + '</span></span>' +
+        (d >= 30 ? '<span class="pill warn">超期</span>' : '') +
+        '</button>';
+    });
+    h += '</div></div>';
+  }
 
   h += '<div class="block"><h3>最近添加</h3><div class="recent">' +
     S.items.slice(0, 5).map(recentHTML).join('') + '</div></div>';
@@ -584,9 +700,23 @@ function openDetail(id) {
   h += '<div class="pills">' +
     '<span class="pill">' + esc(cat ? ((cat.emoji ? cat.emoji + ' ' : '') + cat.name) : '未分类') + '</span>' +
     '<span class="pill">' + esc(loc ? loc.name : '未记位置') + '</span>' +
-    '<span class="pill">' + qtyOf(it) + ' 件</span>' +
     (it.loan ? '<span class="pill warn">借出中</span>' : '') +
     '</div>';
+
+  h += '<div class="qty-row">' +
+    '<button class="qbtn" data-act="qty-dec" data-id="' + it.id + '" aria-label="减一件">−</button>' +
+    '<span class="qnum">' + qtyOf(it) + ' 件</span>' +
+    '<button class="qbtn" data-act="qty-inc" data-id="' + it.id + '" aria-label="加一件">＋</button>' +
+    '</div>';
+
+  var tg = tagsOf(it);
+  if (tg.length) {
+    h += '<div class="pills">';
+    tg.forEach(function (t) {
+      h += '<button class="pill tag-pill" data-act="filter-tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>';
+    });
+    h += '</div>';
+  }
 
   h += '<div class="fields">';
   if (num(it.price) > 0) {
@@ -601,8 +731,11 @@ function openDetail(id) {
 
   h += '<div class="loan-card">';
   if (it.loan) {
-    h += '<div class="loan-head"><b>已借给 ' + esc(it.loan.to) + '</b></div>';
+    var dOut = daysOut(it);
+    h += '<div class="loan-head"><b>已借给 ' + esc(it.loan.to) + '</b>' +
+      (dOut >= 30 ? '<span class="pill warn">' + dOut + ' 天未还</span>' : '') + '</div>';
     h += '<div class="loan-body">借出日期：' + esc(it.loan.since || '—') +
+      (dOut > 0 ? '（' + dOut + ' 天）' : '') +
       (it.loan.note ? '<br>备注：' + esc(it.loan.note) : '') + '</div>';
     h += '<button class="btn solid block" data-act="return" data-id="' + it.id + '">记一笔归还</button>';
   } else {
@@ -655,7 +788,8 @@ function openEditor(item) {
   } else {
     f = {
       id: '', name: '', categoryId: '', locationId: '', qty: 1, price: '',
-      date: '', note: '', photoIds: [], loan: null, history: [], createdAt: 0, updatedAt: 0
+      date: '', note: '', photoIds: [], loan: null, history: [], createdAt: 0, updatedAt: 0,
+      tags: []
     };
   }
   f.photos = [];
@@ -703,7 +837,26 @@ function editorHTML(f) {
 
   h += '<label class="field"><span>购入日期</span><input id="f-date" type="date" value="' + esc(f.date || '') + '"></label>';
   h += '<label class="field"><span>备注</span><textarea id="f-note" rows="3" placeholder="颜色、尺码、放哪一格、谁送的……">' + esc(f.note || '') + '</textarea></label>';
+
+  h += '<label class="field"><span>标签（逗号分隔，选填）</span><input id="f-tags" maxlength="90" placeholder="例：冬季, 常穿" value="' + esc((f.tags || []).join(', ')) + '"></label>';
+  h += tagQuickHTML(f);
+
   h += '<p class="hint">照片最多 9 张，保存时会自动压缩，不占太多空间。</p>';
+  if (!f.id) {
+    h += '<button type="button" class="btn ghost block" data-act="save-continue">保存，继续添加下一件</button>';
+  }
+  return h;
+}
+
+function tagQuickHTML(f) {
+  var cur = f.tags || [];
+  var pool = collectTags().filter(function (t) { return cur.indexOf(t) < 0; }).slice(0, 12);
+  if (!pool.length) return '';
+  var h = '<div class="field"><span>常用标签</span><div class="chip-row">';
+  pool.forEach(function (t) {
+    h += '<button type="button" class="chip mini" data-act="quick-tag" data-tag="' + esc(t) + '">#' + esc(t) + '</button>';
+  });
+  h += '</div></div>';
   return h;
 }
 
@@ -880,7 +1033,19 @@ function removePhoto(i) {
 
 /* ---------------- 保存 ---------------- */
 
-function saveForm() {
+function parseTags(v) {
+  var out = [];
+  String(v || '').split(/[,，、;；\s]+/).forEach(function (t) {
+    t = t.trim().replace(/^#/, '');
+    if (!t || t.length > 12) return;
+    if (out.indexOf(t) >= 0) return;
+    if (out.length >= 10) return;
+    out.push(t);
+  });
+  return out;
+}
+
+function saveForm(keepOpen) {
   var f = S.form;
   if (!f) return;
 
@@ -897,6 +1062,7 @@ function saveForm() {
   var priceEl = $('#f-price');
   var dateEl = $('#f-date');
   var noteEl = $('#f-note');
+  var tagsEl = $('#f-tags');
 
   var item = {
     id: f.id || uid(),
@@ -907,6 +1073,7 @@ function saveForm() {
     price: num(priceEl ? priceEl.value : 0),
     date: dateEl ? dateEl.value : '',
     note: noteEl ? noteEl.value.trim() : '',
+    tags: parseTags(tagsEl ? tagsEl.value : ''),
     photoIds: [],
     loan: f.loan || null,
     history: f.history || [],
@@ -944,12 +1111,31 @@ function saveForm() {
     }
   });
 
+  var keepCat = item.categoryId;
+  var keepLoc = item.locationId;
+  var keepTags = item.tags.slice();
+
   jobs.push(DB.put('items', item));
 
   Promise.all(jobs).then(function () {
     var wasNew = !f.id;
-    closeSheet();
     return reload().then(function () {
+      if (keepOpen && wasNew) {
+        var draft = {
+          id: '', name: '', categoryId: keepCat, locationId: keepLoc,
+          qty: 1, price: '', date: '', note: '', photoIds: [],
+          loan: null, history: [], createdAt: 0, updatedAt: 0,
+          tags: keepTags, photos: [], oldPhotoIds: []
+        };
+        S.form = draft;
+        $('#sheetBody').innerHTML = editorHTML(draft);
+        render();
+        var n = $('#f-name');
+        if (n) { try { n.focus(); } catch (e) { } }
+        toast('已收下「' + item.name + '」，继续下一件');
+        return;
+      }
+      closeSheet();
       if (!wasNew && S.current === item.id && !$('#detail').hidden) openDetail(item.id);
       render();
       toast(wasNew ? '已收下「' + item.name + '」' : '已保存');
@@ -1901,6 +2087,10 @@ function onDocChange(e) {
     S.page = 1;
     $('#view').innerHTML = itemsHTML();
     hydrateThumbs();
+  } else if (t.id === 'sortSel') {
+    S.sort = t.value;
+    $('#view').innerHTML = itemsHTML();
+    hydrateThumbs();
   } else if (t.id === 'f-loc' && S.form) {
     S.form.locationId = t.value;
   }
@@ -1928,7 +2118,12 @@ function onDocClick(e) {
     case 'lend': lendItem(id); break;
     case 'return': returnItem(id); break;
     case 'close-sheet': closeSheet(); break;
-    case 'save-item': saveForm(); break;
+    case 'save-item': saveForm(false); break;
+    case 'save-continue': saveForm(true); break;
+    case 'qty-inc': changeQty(id, 1); break;
+    case 'qty-dec': changeQty(id, -1); break;
+    case 'filter-tag': setTagFilter(el.getAttribute('data-tag')); break;
+    case 'quick-tag': appendQuickTag(el.getAttribute('data-tag')); break;
     case 'add-photo': pickPhotos(); break;
     case 'rm-photo': removePhoto(parseInt(el.getAttribute('data-i'), 10)); break;
     case 'pick-cat': pickCat(id); break;

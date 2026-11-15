@@ -126,9 +126,9 @@ ul { padding: 0; list-style: none; }
 .chip i { font-style: normal; font-size: 11px; opacity: 0.55; }
 .chip.dashed { border-style: dashed; color: var(--ink-3); }
 
-.filter-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; min-height: 34px; }
+.filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; min-height: 34px; }
 .filter-row select {
-  height: 34px; max-width: 50%; padding: 0 10px;
+  height: 34px; max-width: 46%; padding: 0 10px;
   border-radius: 10px; border: 1px solid var(--line);
   background: var(--card); color: var(--ink-2); font-size: 13px;
   outline: none;
@@ -169,6 +169,29 @@ ul { padding: 0; list-style: none; }
   padding: 2px 7px; border-radius: 8px;
   background: var(--warm); color: #fff; font-size: 10px; font-weight: 600;
 }
+.badge-lent.over { background: var(--danger); }
+
+/* 数量快捷增减 */
+.qty-row {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin-top: 14px; padding: 10px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+}
+.qbtn {
+  width: 44px; height: 44px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--bg);
+  font-size: 22px; line-height: 1; color: var(--ink);
+  display: grid; place-items: center;
+}
+.qbtn:active { background: var(--accent-soft); }
+.qnum { min-width: 84px; text-align: center; font-size: 17px; font-weight: 650; }
+
+/* 小标签芯片 */
+.chip.mini { height: 27px; padding: 0 10px; font-size: 12px; border-radius: 14px; }
+.tag-chips { padding-bottom: 6px; }
+
+/* 详情页标签可点击 */
+.tag-pill { cursor: pointer; }
 
 /* ---------- 按钮 ---------- */
 .btn {
