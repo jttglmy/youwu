@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 /* =========================================================
    有物 · 我的物品清单
@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.0';
+var APP_VER = '2.2';
 
 var S = {
   tab: 'items',
@@ -136,6 +136,7 @@ function bind() {
   if (q) q.addEventListener('input', onSearch);
   bindLongPress();
   bindDetailSwipe();
+  bindFurnitureDrag();
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('#dialog').hidden) { dialogCancel(); return; }
@@ -271,14 +272,46 @@ function nodeOf(id, mode) {
 
 function pathOf(id, mode) {
   var parts = [];
-  var cur = nodeOf(id, mode);
+  var cur = anyNode(id);
   var guard = 0;
   while (cur && guard < 20) {
-    parts.unshift(cur.name);
-    cur = cur.parentId ? nodeOf(cur.parentId, mode) : null;
+    parts.unshift(cur.node.name);
+    cur = cur.node.parentId ? anyNode(cur.node.parentId) : null;
     guard++;
   }
   return parts.join(' › ');
+}
+
+/* ---- 跨类型：分类和位置可以互相嵌套 ---- */
+
+function anyNode(id) {
+  var c = S.cats.filter(function (x) { return x.id === id; })[0];
+  if (c) return { node: c, kind: 'cat' };
+  var l = S.locs.filter(function (x) { return x.id === id; })[0];
+  if (l) return { node: l, kind: 'loc' };
+  return null;
+}
+
+/* 某个节点下面的所有子节点（分类、位置都算） */
+function childrenAny(parentId) {
+  var out = [];
+  S.cats.forEach(function (c) { if ((c.parentId || '') === (parentId || '')) out.push({ node: c, kind: 'cat' }); });
+  S.locs.forEach(function (l) { if ((l.parentId || '') === (parentId || '')) out.push({ node: l, kind: 'loc' }); });
+  out.sort(function (a, b) { return (a.node.order || 0) - (b.node.order || 0); });
+  return out;
+}
+
+/* 整棵子树（跨类型），用于防环和删除 */
+function subtreeAny(id) {
+  var out = [id];
+  var stack = [id];
+  while (stack.length) {
+    var cur = stack.pop();
+    childrenAny(cur).forEach(function (x) {
+      if (out.indexOf(x.node.id) < 0) { out.push(x.node.id); stack.push(x.node.id); }
+    });
+  }
+  return out;
 }
 
 function countItemsUnder(id, mode, counts) {
@@ -554,65 +587,286 @@ function furnitureOf(cat) {
   return 'cabinet';
 }
 
-var FUR_ROWS = { bookshelf: 6, wardrobe: 4, shoerack: 5, cabinet: 5 };
+/* 各类家具的目标高度与宽度范围 */
+var FUR_H = { bookshelf: 112, wardrobe: 100, shoerack: 52, cabinet: 64 };
+var FUR_W_MIN = { bookshelf: 38, wardrobe: 46, shoerack: 46, cabinet: 40 };
+var FUR_W_MAX = { bookshelf: 96, wardrobe: 100, shoerack: 112, cabinet: 120 };
 
-/* 找到最顶层分类，子分类的东西也归到同一个家具里 */
+/* 按图片真实长宽比算出显示尺寸 */
+function furSize(type, it) {
+  var h = FUR_H[type] || 64;
+  var r = it.ratio || 1;
+  var w = Math.round(h * r);
+  w = Math.max(FUR_W_MIN[type] || 40, Math.min(FUR_W_MAX[type] || 120, w));
+  return { w: w, h: h };
+}
+
+function furAvailWidth() {
+  var w = window.innerWidth || 390;
+  return Math.min(w, 680) - 42;
+}
+
+/* 把物品按可用宽度切成若干排 */
+function chunkRows(type, items) {
+  var rows = [];
+  var cur = [];
+  var curW = 0;
+  var avail = furAvailWidth();
+
+  items.forEach(function (it) {
+    var size = furSize(type, it);
+    var add = size.w + 4;
+    if (cur.length && curW + add > avail) {
+      rows.push(cur);
+      cur = [];
+      curW = 0;
+    }
+    cur.push({ it: it, size: size });
+    curW += add;
+  });
+  if (cur.length) rows.push(cur);
+  return rows;
+}
+
+/* 找最顶层「分类」，子分类的东西也归到同一个家具里；上级是位置时停在这里 */
 function rootCategoryId(catId) {
   var c = nodeOf(catId, 'cat');
+  if (!c) return '';
   var guard = 0;
-  while (c && c.parentId && guard < 20) {
-    c = nodeOf(c.parentId, 'cat');
+  while (c.parentId && guard < 20) {
+    var p = nodeOf(c.parentId, 'cat');
+    if (!p) break;
+    c = p;
     guard++;
   }
-  return c ? c.id : '';
+  return c.id;
+}
+
+/* 家具里的物品：先按手工排序，再按当前排序方式 */
+function furnitureItems(catId) {
+  var list = S.items.filter(function (it) {
+    return (rootCategoryId(it.categoryId) || '') === (catId || '');
+  });
+  list = list.slice().sort(function (a, b) {
+    var oa = (a.order == null ? 1e15 : a.order);
+    var ob = (b.order == null ? 1e15 : b.order);
+    if (oa !== ob) return oa - ob;
+    return (b.createdAt || 0) - (a.createdAt || 0);
+  });
+  return list;
 }
 
 function shelfHTML(list) {
-  var groups = {};
-  list.forEach(function (it) {
-    var key = rootCategoryId(it.categoryId) || '';
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(it);
-  });
+  var present = {};
+  list.forEach(function (it) { present[rootCategoryId(it.categoryId) || ''] = true; });
 
   var order = [];
   S.cats.forEach(function (c) {
-    if (!c.parentId && groups[c.id]) order.push(c.id);
+    if (!c.parentId && present[c.id]) order.push(c.id);
   });
-  if (groups['']) order.push('');
+  if (present['']) order.push('');
 
   var h = '';
-  order.forEach(function (id) { h += furnitureHTML(id, groups[id]); });
+  order.forEach(function (id) { h += furnitureHTML(id, furnitureItems(id)); });
   return h;
 }
 
 function furnitureHTML(catId, items) {
   var cat = catId ? nodeOf(catId, 'cat') : null;
   var type = furnitureOf(cat);
-  var perRow = FUR_ROWS[type] || 5;
   var title = cat ? ((cat.emoji ? cat.emoji + ' ' : '') + cat.name) : '未分类';
+  var rows = chunkRows(type, items);
 
-  var h = '<div class="fur fur-' + type + '">';
-  h += '<div class="fur-head"><b>' + esc(title) + '</b><span>' + items.length + ' 件</span></div>';
+  var h = '<div class="fur fur-' + type + '" data-cat="' + esc(catId) + '">';
+  h += '<div class="fur-head"><b>' + esc(title) + '</b>' +
+    '<span>' + items.length + ' 件 · 长按可拖动</span></div>';
   h += '<div class="fur-body">';
 
-  for (var i = 0; i < items.length; i += perRow) {
-    var chunk = items.slice(i, i + perRow);
+  rows.forEach(function (row) {
     if (type === 'wardrobe') h += '<div class="fur-rail"></div>';
     h += '<div class="fur-row">';
-    chunk.forEach(function (it) { h += furItemHTML(it); });
+    row.forEach(function (cell) { h += furItemHTML(cell.it, cell.size); });
     h += '</div>';
     if (type !== 'wardrobe') h += '<div class="fur-board"></div>';
-  }
+  });
 
   h += '</div></div>';
   return h;
 }
 
-function furItemHTML(it) {
+/* ---------------- 家具里拖动排序 ---------------- */
+
+var furDrag = null;
+var furPressTimer = null;
+var furPressItem = null;
+var furPressX = 0;
+var furPressY = 0;
+
+function bindFurnitureDrag() {
+  document.addEventListener('pointerdown', function (e) {
+    if (S.viewMode !== 'shelf') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    var el = e.target.closest ? e.target.closest('.fur-item') : null;
+    if (!el) return;
+    furPressItem = el;
+    furPressX = e.clientX;
+    furPressY = e.clientY;
+    clearTimeout(furPressTimer);
+    furPressTimer = setTimeout(function () {
+      startFurDrag(furPressX, furPressY);
+    }, 300);
+  }, { passive: true });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!furPressItem) return;
+    if (!furDrag) {
+      if (Math.abs(e.clientX - furPressX) > 8 || Math.abs(e.clientY - furPressY) > 8) {
+        clearTimeout(furPressTimer);
+      }
+      return;
+    }
+    if (e.cancelable) e.preventDefault();
+    moveFurGhost(e.clientX, e.clientY);
+    markFurDrop(e.clientX, e.clientY);
+  }, { passive: false });
+
+  document.addEventListener('pointerup', function (e) {
+    clearTimeout(furPressTimer);
+    furPressItem = null;
+    if (furDrag) endFurDrag(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('pointercancel', function () {
+    clearTimeout(furPressTimer);
+    furPressItem = null;
+    cancelFurDrag();
+  });
+}
+
+function startFurDrag(px, py) {
+  if (!furPressItem) return;
+  var el = furPressItem;
+  var rect = el.getBoundingClientRect();
+  var ghost = el.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.classList.remove('drag-source');
+  ghost.style.width = rect.width + 'px';
+  ghost.style.left = (px - rect.width / 2) + 'px';
+  ghost.style.top = (py - rect.height / 2) + 'px';
+  document.body.appendChild(ghost);
+  el.classList.add('drag-source');
+  furDrag = { id: el.getAttribute('data-id'), el: el, ghost: ghost, w: rect.width, h: rect.height };
+  try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) { }
+}
+
+function moveFurGhost(px, py) {
+  if (!furDrag) return;
+  furDrag.ghost.style.left = (px - furDrag.w / 2) + 'px';
+  furDrag.ghost.style.top = (py - furDrag.h / 2) + 'px';
+}
+
+function clearFurDrop() {
+  $$('.fur-item.drop-target').forEach(function (el) { el.classList.remove('drop-target'); });
+}
+
+function markFurDrop(px, py) {
+  clearFurDrop();
+  var over = document.elementFromPoint(px, py);
+  var item = over && over.closest ? over.closest('.fur-item') : null;
+  if (item && item !== furDrag.el) item.classList.add('drop-target');
+}
+
+function cancelFurDrag() {
+  if (!furDrag) return;
+  furDrag.ghost.remove();
+  furDrag.el.classList.remove('drag-source');
+  clearFurDrop();
+  furDrag = null;
+}
+
+function endFurDrag(px, py) {
+  var d = furDrag;
+  if (!d) return;
+
+  var over = document.elementFromPoint(px, py);
+  var targetItem = over && over.closest ? over.closest('.fur-item') : null;
+  var targetFur = over && over.closest ? over.closest('.fur') : null;
+
+  d.ghost.remove();
+  clearFurDrop();
+  furDrag = null;
+  S.suppressClick = true;
+
+  if (!targetFur) { d.el.classList.remove('drag-source'); return; }
+
+  var targetCat = targetFur.getAttribute('data-cat') || '';
+  var dragItem = findItem(d.id);
+  if (!dragItem) { d.el.classList.remove('drag-source'); return; }
+
+  var oldRoot = rootCategoryId(dragItem.categoryId) || '';
+  var list = furnitureItems(targetCat).filter(function (x) { return x.id !== dragItem.id; });
+
+  var insertIndex = list.length;
+  if (targetItem && targetItem !== d.el) {
+    var tid = targetItem.getAttribute('data-id');
+    var idx = -1;
+    list.forEach(function (x, i) { if (x.id === tid) idx = i; });
+    if (idx >= 0) {
+      var r = targetItem.getBoundingClientRect();
+      insertIndex = (px > r.left + r.width / 2) ? idx + 1 : idx;
+    }
+  }
+
+  list.splice(insertIndex, 0, dragItem);
+
+  var jobs = [];
+  list.forEach(function (it, i) {
+    it.order = i + 1;
+    if (it.id === dragItem.id) it.categoryId = targetCat;
+    it.updatedAt = Date.now();
+    jobs.push(DB.put('items', it));
+  });
+
+  Promise.all(jobs).then(reload).then(function () {
+    render();
+    if (oldRoot !== targetCat) {
+      toast('已移到「' + (targetCat ? catName(targetCat) : '未分类') + '」第 ' + (insertIndex + 1) + ' 位');
+    } else {
+      toast('已调整到第 ' + (insertIndex + 1) + ' 位');
+    }
+  }).catch(fatal);
+}
+
+/* 按图片重算长宽比（老数据用） */
+function recalcRatios() {
+  var todo = S.items.filter(function (it) {
+    return it.photoIds && it.photoIds.length && !it.ratio;
+  });
+  if (!todo.length) { toast('长宽比都是最新的'); return; }
+
+  toast('正在按图片重算…');
+  var chain = Promise.resolve();
+  todo.forEach(function (it) {
+    chain = chain.then(function () {
+      return DB.get('photos', it.photoIds[0]).then(function (p) {
+        if (!p || !p.w || !p.h) return null;
+        it.ratio = Math.max(0.35, Math.min(2.4, p.w / p.h));
+        return DB.put('items', it);
+      }).catch(function () { });
+    });
+  });
+  chain.then(reload).then(function () {
+    render();
+    toast('已重算 ' + todo.length + ' 件');
+  }).catch(fatal);
+}
+
+function furItemHTML(it, size) {
   var pid = (it.photoIds || [])[0];
-  var h = '<button class="fur-item" data-act="open" data-id="' + it.id + '">';
-  h += '<span class="fur-photo"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
+  var s = size || furSize('cabinet', it);
+  var h = '<button class="fur-item" data-act="open" data-id="' + it.id + '" style="width:' + s.w + 'px">';
+  h += '<span class="fur-photo"' + (pid ? ' data-photo="' + pid + '"' : '') +
+    ' style="width:' + s.w + 'px;height:' + s.h + 'px">' +
     (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>';
   h += '<span class="fur-name">' + esc(it.name) + '</span>';
   h += '</button>';
@@ -774,64 +1028,67 @@ function recentHTML(it) {
 /* ---------------- 分类 / 位置 ---------------- */
 
 function tagsHTML() {
-  var mode = S.tagMode;
   var counts = {};
   S.items.forEach(function (i) {
-    var k = mode === 'cat' ? i.categoryId : i.locationId;
-    if (k) counts[k] = (counts[k] || 0) + 1;
+    if (i.categoryId) counts[i.categoryId] = (counts[i.categoryId] || 0) + 1;
+    if (i.locationId) counts[i.locationId] = (counts[i.locationId] || 0) + 1;
   });
 
-  var h = '<div class="seg">' +
-    '<button class="seg-btn' + (mode === 'cat' ? ' on' : '') + '" data-act="tag-mode" data-mode="cat">分类</button>' +
-    '<button class="seg-btn' + (mode === 'loc' ? ' on' : '') + '" data-act="tag-mode" data-mode="loc">位置</button>' +
-    '</div>';
-
-  h += '<p class="hint">点一下查看这类东西；长按修改名称、图标和上级。</p>';
+  var h = '<p class="hint">点一下筛选，长按修改。分类和位置可以互相嵌套：位置下面能挂分类，分类下面也能挂位置。</p>';
 
   h += '<div class="tag-list">';
-  var roots = childrenOf('', mode);
-  if (!roots.length) h += '<p class="hint">还没有' + (mode === 'cat' ? '分类' : '位置') + '，点下面新建一个。</p>';
-  roots.forEach(function (t) { h += tagRowHTML(t, 0, mode, counts); });
+  var roots = childrenAny('');
+  if (!roots.length) h += '<p class="hint">还没有分类或位置。</p>';
+  roots.forEach(function (x) { h += tagRowHTML(x, 0, counts); });
   h += '</div>';
 
-  h += '<button class="btn ghost block" data-act="new-tag">＋ 新建' + (mode === 'cat' ? '分类' : '位置') + '</button>';
+  h += '<button class="btn ghost block" data-act="new-tag" data-mode="cat">＋ 新建分类</button>';
+  h += '<button class="btn ghost block" data-act="new-tag" data-mode="loc">＋ 新建位置</button>';
   return h;
 }
 
-function tagRowHTML(t, depth, mode, counts) {
-  var kids = childrenOf(t.id, mode);
-  var key = mode + ':' + t.id;
+function tagRowHTML(entry, depth, counts) {
+  var t = entry.node;
+  var kind = entry.kind;
+  var kids = childrenAny(t.id);
+  var key = kind + ':' + t.id;
   var open = !!S.expanded[key];
-  var activeId = mode === 'cat' ? S.cat : S.loc;
+  var active = kind === 'cat' ? (S.cat === t.id) : (S.loc === t.id);
 
-  var h = '<div class="tag-row' + (t.id === activeId ? ' active' : '') + '"' +
-    ' data-longpress="1" data-kind="' + mode + '" data-id="' + t.id + '"' +
-    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + mode + '"' +
+  var h = '<div class="tag-row' + (active ? ' active' : '') + '"' +
+    ' data-longpress="1" data-kind="' + kind + '" data-id="' + t.id + '"' +
+    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + kind + '"' +
     ' style="padding-left:' + (12 + depth * 18) + 'px">';
 
   h += '<span class="tag-caret' + (kids.length ? '' : ' blank') + '"' +
     (kids.length ? ' data-act="toggle-node" data-key="' + key + '"' : '') + '>' +
     (kids.length ? (open ? '▾' : '▸') : '') + '</span>';
 
-  h += '<span class="tag-emoji">' + esc(t.emoji || (mode === 'cat' ? '🏷️' : '📍')) + '</span>';
+  h += '<span class="tag-emoji">' + esc(kind === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
   h += '<span class="tag-name">' + esc(t.name) + '</span>';
-  h += '<span class="tag-count">' + countItemsUnder(t.id, mode, counts) + '</span>';
-  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '">✕</button>';
+  if (kind === 'loc') h += '<span class="tag-kind">位置</span>';
+  h += '<span class="tag-count">' + countItemsUnder(t.id, kind, counts) + '</span>';
+  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + kind + '">✕</button>';
   h += '</div>';
 
   if (open) {
-    kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, mode, counts); });
+    kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, counts); });
   }
   return h;
 }
 
 function parentOptions(mode, excludeId) {
-  var list = mode === 'cat' ? S.cats : S.locs;
-  var banned = excludeId ? subtreeOf(excludeId, mode) : [];
+  var banned = excludeId ? subtreeAny(excludeId) : [];
   var opts = [['', '（顶层）']];
-  list.filter(function (x) { return banned.indexOf(x.id) < 0; })
-    .sort(function (a, b) { return pathOf(a.id, mode).localeCompare(pathOf(b.id, mode), 'zh-CN'); })
-    .forEach(function (x) { opts.push([x.id, pathOf(x.id, mode)]); });
+  var all = [];
+  S.cats.forEach(function (c) { all.push({ node: c, kind: 'cat' }); });
+  S.locs.forEach(function (l) { all.push({ node: l, kind: 'loc' }); });
+
+  all.filter(function (x) { return banned.indexOf(x.node.id) < 0; })
+    .sort(function (a, b) { return pathOf(a.node.id).localeCompare(pathOf(b.node.id), 'zh-CN'); })
+    .forEach(function (x) {
+      opts.push([x.node.id, (x.kind === 'cat' ? '🏷️ ' : '📍 ') + pathOf(x.node.id)]);
+    });
   return opts;
 }
 
@@ -878,7 +1135,8 @@ function settingsHTML() {
     '<p class="hint">把你拥有的每一件东西，都记下来。</p>' +
     '<p class="hint" id="verHint"></p>' +
     '<button class="btn ghost block" data-act="force-update">强制更新到最新版</button>' +
-    '<p class="hint">只清网页缓存，不会动你的物品数据。</p></div>';
+    '<p class="hint">只清网页缓存，不会动你的物品数据。</p>' +
+    '<button class="btn ghost block" data-act="recalc-ratio">按图片重算卡片比例</button></div>';
   return h;
 }
 
@@ -1078,9 +1336,11 @@ function loadEditorPhotos(f, done) {
   var list = f.oldPhotoIds || [];
   if (!list.length) { done(); return; }
   Promise.all(list.map(function (pid) {
-    return Promise.all([getPhotoUrl(pid, 'full'), getPhotoUrl(pid, 'thumb')]).then(function (urls) {
+    return Promise.all([getPhotoUrl(pid, 'full'), getPhotoUrl(pid, 'thumb'), DB.get('photos', pid)]).then(function (res) {
+      var urls = [res[0], res[1]];
+      var rec = res[2] || {};
       if (!urls[0] && !urls[1]) return null;
-      return { id: pid, isNew: false, url: urls[0], thumbUrl: urls[1] };
+      return { id: pid, isNew: false, url: urls[0], thumbUrl: urls[1], w: rec.w, h: rec.h };
     }).catch(function () { return null; });
   })).then(function (arr) {
     arr.forEach(function (x) { if (x) f.photos.push(x); });
@@ -1641,6 +1901,12 @@ function saveForm(keepOpen) {
   var noteEl = $('#f-note');
   var tagsEl = $('#f-tags');
 
+  var ratio = 1;
+  var firstPhoto = (f.photos && f.photos[0]) || null;
+  if (firstPhoto && firstPhoto.w && firstPhoto.h) ratio = firstPhoto.w / firstPhoto.h;
+  else if (f.ratio) ratio = f.ratio;
+  ratio = Math.max(0.35, Math.min(2.4, ratio));
+
   var item = {
     id: f.id || uid(),
     name: name,
@@ -1651,6 +1917,8 @@ function saveForm(keepOpen) {
     date: dateEl ? dateEl.value : '',
     note: noteEl ? noteEl.value.trim() : '',
     tags: parseTags(tagsEl ? tagsEl.value : ''),
+    ratio: ratio,
+    order: f.order,
     photoIds: [],
     loan: f.loan || null,
     history: f.history || [],
@@ -1691,7 +1959,6 @@ function saveForm(keepOpen) {
   var keepCat = item.categoryId;
   var keepLoc = item.locationId;
   var keepTags = item.tags.slice();
-
   jobs.push(DB.put('items', item));
 
   Promise.all(jobs).then(function () {
@@ -1880,13 +2147,14 @@ function newTag(modeArg) {
 }
 
 function editTag(id, modeArg) {
-  var mode = modeArg || S.tagMode;
-  var t = nodeOf(id, mode);
-  if (!t) return;
+  var info = anyNode(id);
+  if (!info) return;
+  var mode = modeArg || info.kind;
+  var t = info.node;
 
   var fields = [
     { key: 'name', label: '名称', value: t.name, required: true },
-    { key: 'parentId', label: '上级', type: 'select', options: parentOptions(mode, id), value: t.parentId || '' }
+    { key: 'parentId', label: '上级（分类或位置都行）', type: 'select', options: parentOptions(mode, id), value: t.parentId || '' }
   ];
   if (mode === 'cat') {
     fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: t.shape || 'square' });
@@ -1912,17 +2180,18 @@ function editTag(id, modeArg) {
 }
 
 function delTag(id, modeArg) {
-  var mode = modeArg || S.tagMode;
-  var t = nodeOf(id, mode);
-  if (!t) return;
-  var kids = childrenOf(id, mode);
+  var info = anyNode(id);
+  if (!info) return;
+  var mode = modeArg || info.kind;
+  var t = info.node;
+  var kids = childrenAny(id);
 
   confirmDialog({
     title: '删除「' + t.name + '」？',
     desc: (mode === 'cat'
       ? '这个分类下的物品不会删除，会变成「未分类」。'
       : '用了这个位置的物品不会删除，会变成「未记位置」。') +
-      (kids.length ? '它的 ' + kids.length + ' 个子' + (mode === 'cat' ? '分类' : '位置') + '会移到上一层。' : ''),
+      (kids.length ? '它的 ' + kids.length + ' 个子节点会移到上一层。' : ''),
     okText: '删除',
     danger: true
   }).then(function (ok) {
@@ -1932,8 +2201,9 @@ function delTag(id, modeArg) {
     var chain = Promise.resolve();
 
     kids.forEach(function (k) {
-      k.parentId = t.parentId || '';
-      chain = chain.then(function () { return DB.put(store, k); });
+      k.node.parentId = t.parentId || '';
+      var s = k.kind === 'cat' ? 'categories' : 'locations';
+      chain = chain.then(function () { return DB.put(s, k.node); });
     });
 
     S.items.forEach(function (it) {
@@ -2294,6 +2564,8 @@ async function mergeJSON(data) {
           date: src.date || '',
           note: src.note || '',
           photoIds: hasPhotos ? (src.photoIds || []) : [],
+          ratio: src.ratio,
+          order: src.order,
           loan: src.loan || null,
           history: src.history || [],
           createdAt: src.createdAt || Date.now(),
@@ -2314,6 +2586,8 @@ async function mergeJSON(data) {
           date: src.date || '',
           note: src.note || '',
           photoIds: hasPhotos ? (src.photoIds || []) : (local.photoIds || []),
+          ratio: (src.ratio != null ? src.ratio : local.ratio),
+          order: (src.order != null ? src.order : local.order),
           loan: src.loan || null,
           history: src.history || [],
           createdAt: local.createdAt || src.createdAt || Date.now(),
@@ -2836,8 +3110,8 @@ function onDocClick(e) {
     case 'go-tag': {
       var kind = el.getAttribute('data-mode');
       var nodeId = el.getAttribute('data-tag');
-      if (kind === 'cat') { S.cat = nodeId; S.tag = 'all'; }
-      else { S.loc = nodeId; }
+      if (kind === 'cat') { S.cat = nodeId; S.loc = 'all'; S.tag = 'all'; }
+      else { S.loc = nodeId; S.cat = 'all'; S.tag = 'all'; }
       S.tab = 'items';
       S.page = 1;
       render();
@@ -2850,9 +3124,9 @@ function onDocClick(e) {
       break;
     }
     case 'tag-mode': S.tagMode = el.getAttribute('data-mode'); render(); break;
-    case 'new-tag': newTag(); break;
+    case 'new-tag': newTag(el.getAttribute('data-mode') || S.tagMode); break;
     case 'edit-tag': editTag(id); break;
-    case 'del-tag': delTag(id); break;
+    case 'del-tag': delTag(id, el.getAttribute('data-kind')); break;
     case 'how-install': showInstallHelp(); break;
     case 'export-json': exportJSON(false); break;
     case 'export-json-photos': exportJSON(true); break;
@@ -2863,6 +3137,7 @@ function onDocClick(e) {
     case 'import-csv': pickImport('csv'); break;
     case 'wipe': wipeAll(); break;
     case 'force-update': forceUpdate(); break;
+    case 'recalc-ratio': recalcRatios(); break;
     case 'demo': loadDemo(); break;
     case 'dlg-ok': dialogOk(); break;
     case 'dlg-cancel': dialogCancel(); break;
