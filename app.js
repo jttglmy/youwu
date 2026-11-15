@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '1.7';
+var APP_VER = '1.8';
 
 var S = {
   tab: 'items',
@@ -135,6 +135,7 @@ function bind() {
   var q = $('#q');
   if (q) q.addEventListener('input', onSearch);
   bindLongPress();
+  bindDetailSwipe();
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('#dialog').hidden) { dialogCancel(); return; }
@@ -892,6 +893,12 @@ function openDetail(id) {
   if (!it) { toast('这件东西已经不在了'); return; }
   S.current = it.id;
 
+  var navList = filteredItems();
+  if (!navList.length) navList = S.items;
+  S.navIds = navList.map(function (x) { return x.id; });
+  S.navIndex = S.navIds.indexOf(it.id);
+  if (S.navIndex < 0) { S.navIds = [it.id]; S.navIndex = 0; }
+
   var cat = S.cats.filter(function (c) { return c.id === it.categoryId; })[0];
   var loc = S.locs.filter(function (l) { return l.id === it.locationId; })[0];
   var photos = it.photoIds || [];
@@ -966,6 +973,12 @@ function openDetail(id) {
   h += '</div>';
 
   h += '</div>';
+
+  h += '<div class="detail-nav">' +
+    '<button class="nav-btn" data-act="prev-item"' + (S.navIndex <= 0 ? ' disabled' : '') + '>‹ 上一件</button>' +
+    '<span class="nav-pos">' + (S.navIndex + 1) + ' / ' + S.navIds.length + '</span>' +
+    '<button class="nav-btn" data-act="next-item"' + (S.navIndex >= S.navIds.length - 1 ? ' disabled' : '') + '>下一件 ›</button>' +
+    '</div>';
 
   var box = $('#detail');
   box.innerHTML = h;
@@ -1250,6 +1263,45 @@ function closeSheet() {
   $('#picker').hidden = true;
   S.form = null;
   syncLock();
+}
+
+/* 上下件切换 */
+function navItem(delta) {
+  if (!S.navIds || !S.navIds.length) return;
+  var next = S.navIndex + delta;
+  if (next < 0) { toast('已经是第一件了'); return; }
+  if (next >= S.navIds.length) { toast('已经是最后一件了'); return; }
+  openDetail(S.navIds[next]);
+  var sc = $('#detail .detail-scroll');
+  if (sc) sc.scrollTop = 0;
+}
+
+/* 详情页左右滑动切换 */
+function bindDetailSwipe() {
+  var el = document.getElementById('detail');
+  if (!el) return;
+  var startX = 0, startY = 0, tracking = false;
+
+  el.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    if (e.target.closest && (e.target.closest('.gallery') || e.target.closest('button'))) {
+      tracking = false;
+      return;
+    }
+    tracking = true;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+  }, { passive: true });
+
+  el.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - startX;
+    var dy = t.clientY - startY;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return;
+    navItem(dx < 0 ? 1 : -1);
+  }, { passive: true });
 }
 
 function syncLock() {
@@ -2673,6 +2725,8 @@ function onDocClick(e) {
     case 'new-loc-picker': newLocInline(); break;
     case 'qty-inc': changeQty(id, 1); break;
     case 'qty-dec': changeQty(id, -1); break;
+    case 'prev-item': navItem(-1); break;
+    case 'next-item': navItem(1); break;
     case 'toggle-detail-more': {
       var dm = $('#detailMore');
       if (!dm) break;
