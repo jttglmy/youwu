@@ -84,7 +84,8 @@ var S = {
   ready: false,
   lsMode: false,
   recentLocs: [],
-  autoCut: false
+  autoCut: false,
+  viewMode: 'grid'
 };
 
 var urlCache = {};
@@ -212,11 +213,12 @@ function guessShape(name) {
 function loadPrefs() {
   return DB.get('meta', 'settings').then(function (rec) {
     S.autoCut = !!(rec && rec.autoCut);
+    S.viewMode = (rec && rec.viewMode === 'shelf') ? 'shelf' : 'grid';
   }).catch(function () { });
 }
 
 function savePrefs() {
-  DB.put('meta', { key: 'settings', autoCut: !!S.autoCut }).catch(function () { });
+  DB.put('meta', { key: 'settings', autoCut: !!S.autoCut, viewMode: S.viewMode }).catch(function () { });
 }
 
 /* 老数据没有 shape 的，按名字猜一个并写回 */
@@ -463,6 +465,7 @@ function itemsHTML() {
 
   h += '<div class="filter-row"><select id="locFilter">' + locOpts.join('') + '</select>' +
     '<select id="sortSel" aria-label="排序">' + sortOpts + '</select>' +
+    '<button class="link small" data-act="toggle-view">' + (S.viewMode === 'shelf' ? '网格' : '书架') + '</button>' +
     '<span class="result-count">' + list.length + ' 条</span>' +
     (hasFilter ? '<button class="link small" data-act="clear-filter">清除</button>' : '') + '</div>';
 
@@ -471,10 +474,52 @@ function itemsHTML() {
     return h;
   }
 
+  if (S.viewMode === 'shelf') {
+    return h + shelfHTML(list);
+  }
+
   h += '<div class="grid">' + shown.map(cardHTML).join('') + '</div>';
   if (list.length > shown.length) {
     h += '<button class="btn ghost block" data-act="load-more">加载更多（还有 ' + (list.length - shown.length) + ' 条）</button>';
   }
+  return h;
+}
+
+/* ---------------- 书架视图 ---------------- */
+
+function shelfHTML(list) {
+  var byLoc = {};
+  list.forEach(function (it) {
+    var k = it.locationId || '';
+    if (!byLoc[k]) byLoc[k] = [];
+    byLoc[k].push(it);
+  });
+
+  var order = S.locs.map(function (l) { return l.id; }).filter(function (id) { return byLoc[id]; });
+  if (byLoc['']) order.push('');
+
+  var h = '';
+  order.forEach(function (id) {
+    var items = byLoc[id];
+    h += '<div class="shelf-block">';
+    h += '<div class="shelf-label"><b>' + (id ? esc(locName(id)) : '未记位置') + '</b><span>' + items.length + ' 件</span></div>';
+    h += '<div class="shelf-items">';
+    items.forEach(function (it) { h += shelfItemHTML(it); });
+    h += '</div>';
+    h += '<div class="shelf-board"></div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function shelfItemHTML(it) {
+  var pid = (it.photoIds || [])[0];
+  var shape = catShape(it.categoryId);
+  var h = '<button class="shelf-item shape-' + shape + '" data-act="open" data-id="' + it.id + '">';
+  h += '<span class="shelf-photo"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
+    (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>';
+  h += '<span class="shelf-name">' + esc(it.name) + '</span>';
+  h += '</button>';
   return h;
 }
 
@@ -2434,6 +2479,11 @@ function onDocClick(e) {
     case 'new-loc-picker': newLocInline(); break;
     case 'qty-inc': changeQty(id, 1); break;
     case 'qty-dec': changeQty(id, -1); break;
+    case 'toggle-view':
+      S.viewMode = (S.viewMode === 'shelf') ? 'grid' : 'shelf';
+      savePrefs();
+      render();
+      break;
     case 'filter-tag': setTagFilter(el.getAttribute('data-tag')); break;
     case 'quick-tag': appendQuickTag(el.getAttribute('data-tag')); break;
     case 'add-photo': pickPhotos(); break;

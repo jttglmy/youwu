@@ -1,4 +1,4 @@
-﻿const CACHE = 'youwu-v6';
+const CACHE = 'youwu-v7';
 const ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,6 @@ const ASSETS = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
-      // 逐个缓存，任何一个失败都不影响整体安装
       .then((c) => Promise.all(ASSETS.map((url) => c.add(url).catch(() => null))))
       .then(() => self.skipWaiting())
   );
@@ -28,24 +27,25 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+/* 网络优先：在线时总是拿最新文件；断网时回退到缓存 */
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
 
-  if (req.mode === 'navigate') {
-    e.respondWith(fetch(req).catch(() => caches.match('./index.html')));
-    return;
-  }
-
   e.respondWith(
-    caches.match(req).then((hit) => {
-      if (hit) return hit;
-      return fetch(req).then((res) => {
+    fetch(req).then((res) => {
+      if (res && res.ok) {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-        return res;
+      }
+      return res;
+    }).catch(() => {
+      return caches.match(req).then((hit) => {
+        if (hit) return hit;
+        if (req.mode === 'navigate') return caches.match('./index.html');
+        return new Response('离线，且没有缓存', { status: 503, headers: { 'content-type': 'text/plain; charset=utf-8' } });
       });
     })
   );
