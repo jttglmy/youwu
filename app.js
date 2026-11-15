@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.4';
+var APP_VER = '2.5';
 
 var S = {
   tab: 'items',
@@ -945,67 +945,72 @@ function getPhotoUrl(pid, kind) {
 /* ---------------- 分类 / 位置 ---------------- */
 
 function tagsHTML() {
+  var mode = S.tagMode === 'loc' ? 'loc' : 'cat';
+  var list = mode === 'cat' ? S.cats : S.locs;
   var counts = {};
   S.items.forEach(function (i) {
-    if (i.categoryId) counts[i.categoryId] = (counts[i.categoryId] || 0) + 1;
-    if (i.locationId) counts[i.locationId] = (counts[i.locationId] || 0) + 1;
+    var k = mode === 'cat' ? i.categoryId : i.locationId;
+    if (k) counts[k] = (counts[k] || 0) + 1;
   });
 
-  var h = '<p class="hint">点一下筛选，长按修改。分类和位置可以互相嵌套：位置下面能挂分类，分类下面也能挂位置。</p>';
+  var h = '<div class="seg">' +
+    '<button class="seg-btn' + (mode === 'cat' ? ' on' : '') + '" data-act="tag-mode" data-mode="cat">分类</button>' +
+    '<button class="seg-btn' + (mode === 'loc' ? ' on' : '') + '" data-act="tag-mode" data-mode="loc">位置</button>' +
+    '</div>';
+
+  h += '<p class="hint">点一下筛选，长按修改；左边的箭头展开子项。' +
+    (mode === 'cat' ? '分类下面可以再建子分类。' : '位置下面可以再建子位置，比如 卧室 › 衣柜 › 第三层。') +
+    '</p>';
 
   h += '<div class="tag-list">';
-  var roots = childrenAny('');
-  if (!roots.length) h += '<p class="hint">还没有分类或位置。</p>';
-  roots.forEach(function (x) { h += tagRowHTML(x, 0, counts); });
+  var roots = list.filter(function (x) {
+    if (!x.parentId) return true;
+    return !nodeOf(x.parentId, mode);
+  }).sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+
+  if (!roots.length) h += '<p class="hint">还没有' + (mode === 'cat' ? '分类' : '位置') + '。</p>';
+  roots.forEach(function (t) { h += tagRowHTML(t, 0, mode, counts); });
   h += '</div>';
 
-  h += '<button class="btn ghost block" data-act="new-tag" data-mode="cat">＋ 新建分类</button>';
-  h += '<button class="btn ghost block" data-act="new-tag" data-mode="loc">＋ 新建位置</button>';
+  h += '<button class="btn ghost block" data-act="new-tag" data-mode="' + mode + '">＋ 新建' +
+    (mode === 'cat' ? '分类' : '位置') + '</button>';
   return h;
 }
 
-function tagRowHTML(entry, depth, counts) {
-  var t = entry.node;
-  var kind = entry.kind;
-  var kids = childrenAny(t.id);
-  var key = kind + ':' + t.id;
+function tagRowHTML(t, depth, mode, counts) {
+  var kids = childrenOf(t.id, mode);
+  var key = mode + ':' + t.id;
   var open = !!S.expanded[key];
-  var active = kind === 'cat' ? (S.cat === t.id) : (S.loc === t.id);
+  var active = mode === 'cat' ? (S.cat === t.id) : (S.loc === t.id);
 
   var h = '<div class="tag-row' + (active ? ' active' : '') + '"' +
-    ' data-longpress="1" data-kind="' + kind + '" data-id="' + t.id + '"' +
-    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + kind + '"' +
-    ' style="padding-left:' + (12 + depth * 18) + 'px">';
+    ' data-longpress="1" data-kind="' + mode + '" data-id="' + t.id + '"' +
+    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + mode + '"' +
+    ' style="padding-left:' + (12 + depth * 22) + 'px">';
 
   h += '<span class="tag-caret' + (kids.length ? '' : ' blank') + '"' +
     (kids.length ? ' data-act="toggle-node" data-key="' + key + '"' : '') + '>' +
     (kids.length ? (open ? '▾' : '▸') : '') + '</span>';
 
-  h += '<span class="tag-emoji">' + esc(kind === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
+  h += '<span class="tag-emoji">' + esc(mode === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
   h += '<span class="tag-name">' + esc(t.name) + '</span>';
-  if (kind === 'loc') h += '<span class="tag-kind">位置</span>';
-  h += '<span class="tag-count">' + countItemsUnder(t.id, kind, counts) + '</span>';
-  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + kind + '">✕</button>';
+  h += '<span class="tag-count">' + countItemsUnder(t.id, mode, counts) + '</span>';
+  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + mode + '">✕</button>';
   h += '</div>';
 
   if (open) {
-    kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, counts); });
+    kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, mode, counts); });
   }
   return h;
 }
 
 function parentOptions(mode, excludeId) {
-  var banned = excludeId ? subtreeAny(excludeId) : [];
+  var list = mode === 'cat' ? S.cats : S.locs;
+  var banned = excludeId ? subtreeOf(excludeId, mode) : [];
   var opts = [['', '（顶层）']];
-  var all = [];
-  S.cats.forEach(function (c) { all.push({ node: c, kind: 'cat' }); });
-  S.locs.forEach(function (l) { all.push({ node: l, kind: 'loc' }); });
-
-  all.filter(function (x) { return banned.indexOf(x.node.id) < 0; })
-    .sort(function (a, b) { return pathOf(a.node.id).localeCompare(pathOf(b.node.id), 'zh-CN'); })
-    .forEach(function (x) {
-      opts.push([x.node.id, (x.kind === 'cat' ? '🏷️ ' : '📍 ') + pathOf(x.node.id)]);
-    });
+  list.filter(function (x) { return banned.indexOf(x.id) < 0; })
+    .sort(function (a, b) { return pathOf(a.id).localeCompare(pathOf(b.id), 'zh-CN'); })
+    .forEach(function (x) { opts.push([x.id, pathOf(x.id)]); });
   return opts;
 }
 
@@ -2064,14 +2069,13 @@ function newTag(modeArg) {
 }
 
 function editTag(id, modeArg) {
-  var info = anyNode(id);
-  if (!info) return;
-  var mode = modeArg || info.kind;
-  var t = info.node;
+  var mode = modeArg || S.tagMode;
+  var t = nodeOf(id, mode);
+  if (!t) return;
 
   var fields = [
     { key: 'name', label: '名称', value: t.name, required: true },
-    { key: 'parentId', label: '上级（分类或位置都行）', type: 'select', options: parentOptions(mode, id), value: t.parentId || '' }
+    { key: 'parentId', label: '上级', type: 'select', options: parentOptions(mode, id), value: t.parentId || '' }
   ];
   if (mode === 'cat') {
     fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: t.shape || 'square' });
@@ -2097,18 +2101,17 @@ function editTag(id, modeArg) {
 }
 
 function delTag(id, modeArg) {
-  var info = anyNode(id);
-  if (!info) return;
-  var mode = modeArg || info.kind;
-  var t = info.node;
-  var kids = childrenAny(id);
+  var mode = modeArg || S.tagMode;
+  var t = nodeOf(id, mode);
+  if (!t) return;
+  var kids = childrenOf(id, mode);
 
   confirmDialog({
     title: '删除「' + t.name + '」？',
     desc: (mode === 'cat'
       ? '这个分类下的物品不会删除，会变成「未分类」。'
       : '用了这个位置的物品不会删除，会变成「未记位置」。') +
-      (kids.length ? '它的 ' + kids.length + ' 个子节点会移到上一层。' : ''),
+      (kids.length ? '它的 ' + kids.length + ' 个子' + (mode === 'cat' ? '分类' : '位置') + '会移到上一层。' : ''),
     okText: '删除',
     danger: true
   }).then(function (ok) {
@@ -2118,9 +2121,8 @@ function delTag(id, modeArg) {
     var chain = Promise.resolve();
 
     kids.forEach(function (k) {
-      k.node.parentId = t.parentId || '';
-      var s = k.kind === 'cat' ? 'categories' : 'locations';
-      chain = chain.then(function () { return DB.put(s, k.node); });
+      k.parentId = t.parentId || '';
+      chain = chain.then(function () { return DB.put(store, k); });
     });
 
     S.items.forEach(function (it) {
