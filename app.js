@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* =========================================================
    有物 · 我的物品清单
@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.6';
+var APP_VER = '2.8';
 
 var S = {
   tab: 'items',
@@ -91,7 +91,7 @@ var S = {
   autoCut: false,
   viewMode: 'grid',
   expanded: {},
-  suppressClick: false
+  suppressUntil: 0
 };
 
 var urlCache = {};
@@ -138,6 +138,7 @@ function bind() {
   bindLongPress();
   bindDetailSwipe();
   bindFurnitureDrag();
+  bindTreeDrag();
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('#dialog').hidden) { dialogCancel(); return; }
@@ -800,7 +801,7 @@ function endFurDrag(px, py) {
   d.ghost.remove();
   clearFurDrop();
   furDrag = null;
-  S.suppressClick = true;
+  S.suppressUntil = Date.now() + 350;
 
   if (!targetFur) { d.el.classList.remove('drag-source'); return; }
 
@@ -947,27 +948,25 @@ function getPhotoUrl(pid, kind) {
 /* ---------------- 分类 / 位置 ---------------- */
 
 function treeHTML(mode) {
-  var list = mode === 'cat' ? S.cats : S.locs;
-  var counts = {};
+  var catCounts = {};
+  var locCounts = {};
   S.items.forEach(function (i) {
-    var k = mode === 'cat' ? i.categoryId : i.locationId;
-    if (k) counts[k] = (counts[k] || 0) + 1;
+    if (i.categoryId) catCounts[i.categoryId] = (catCounts[i.categoryId] || 0) + 1;
+    if (i.locationId) locCounts[i.locationId] = (locCounts[i.locationId] || 0) + 1;
   });
+  var counts = { cat: catCounts, loc: locCounts };
 
   var h = '<p class="hint">' +
     (mode === 'cat'
-      ? '点一下看这类物品，左边的箭头展开小分类，右边的「＋」在它下面再建一个小分类。'
-      : '点一下看放在这里的东西，箭头展开子位置，「＋」在它下面新建子位置（比如衣柜、抽屉、书架）。') +
-    '长按可以改名或换上级。</p>';
+      ? '点一下看这类物品；箭头展开小分类；「＋」在它下面建小分类。长按可改名、换上级。'
+      : '位置是骨架：卧室 › 书架 › 第三层。「＋」建子位置，也可以把分类拖进来（卧室 › 书架 › 书）。') +
+    '</p>';
 
   h += '<div class="tag-list">';
-  var roots = list.filter(function (x) {
-    if (!x.parentId) return true;
-    return !nodeOf(x.parentId, mode);
-  }).sort(function (a, b) { return (a.order || 0) - (b.order || 0); });
+  var roots = treeRoots(mode);
 
   if (!roots.length) h += '<p class="hint">还没有' + (mode === 'cat' ? '分类' : '位置') + '。</p>';
-  roots.forEach(function (t) { h += tagRowHTML(t, 0, mode, counts); });
+  roots.forEach(function (entry) { h += tagRowHTML(entry, 0, mode, counts); });
   h += '</div>';
 
   h += '<button class="btn ghost block" data-act="new-tag" data-mode="' + mode + '">＋ 新建' +
@@ -975,26 +974,225 @@ function treeHTML(mode) {
   return h;
 }
 
-function tagRowHTML(t, depth, mode, counts) {
-  var kids = childrenOf(t.id, mode);
-  var key = mode + ':' + t.id;
+/* 位置页的根：没有位置上级的位置；分类页的根：没有分类上级的分类 */
+function treeRoots(mode) {
+  var out;
+  if (mode === 'loc') {
+    out = S.locs.filter(function (l) { return !l.parentId || !nodeOf(l.parentId, 'loc'); })
+      .map(function (l) { return { node: l, kind: 'loc' }; });
+  } else {
+    out = S.cats.filter(function (c) { return !c.parentId || !nodeOf(c.parentId, 'cat'); })
+      .map(function (c) { return { node: c, kind: 'cat' }; });
+  }
+  out.sort(function (a, b) { return (a.node.order || 0) - (b.node.order || 0); });
+  return out;
+}
+
+/* 位置可以包含位置和分类；分类只包含分类 */
+function treeKids(kind, id) {
+  if (kind === 'loc') return childrenAny(id);
+  return S.cats.filter(function (c) { return (c.parentId || '') === id; })
+    .sort(function (a, b) { return (a.order || 0) - (b.order || 0); })
+    .map(function (c) { return { node: c, kind: 'cat' }; });
+}
+
+/* ---------------- 分类/位置 长按拖动调整顺序 ---------------- */
+
+var treeDrag = null;
+var treeTimer = null;
+var treePressEl = null;
+var treeX = 0;
+var treeY = 0;
+
+function bindTreeDrag() {
+  document.addEventListener('pointerdown', function (e) {
+    if (S.tab !== 'cats' && S.tab !== 'locs') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (e.target.closest && e.target.closest('button')) return;
+    var row = e.target.closest ? e.target.closest('.tag-row') : null;
+    if (!row) return;
+    treePressEl = row;
+    treeX = e.clientX;
+    treeY = e.clientY;
+    clearTimeout(treeTimer);
+    treeTimer = setTimeout(function () { startTreeDrag(treeX, treeY); }, 350);
+  }, { passive: true });
+
+  document.addEventListener('pointermove', function (e) {
+    if (!treePressEl) return;
+    if (!treeDrag) {
+      if (Math.abs(e.clientX - treeX) > 8 || Math.abs(e.clientY - treeY) > 8) clearTimeout(treeTimer);
+      return;
+    }
+    if (e.cancelable) e.preventDefault();
+    moveTreeGhost(e.clientX, e.clientY);
+    markTreeDrop(e.clientX, e.clientY);
+  }, { passive: false });
+
+  document.addEventListener('pointerup', function (e) {
+    clearTimeout(treeTimer);
+    treePressEl = null;
+    if (treeDrag) endTreeDrag(e.clientX, e.clientY);
+  });
+
+  document.addEventListener('pointercancel', function () {
+    clearTimeout(treeTimer);
+    treePressEl = null;
+    cancelTreeDrag();
+  });
+}
+
+function startTreeDrag(px, py) {
+  if (!treePressEl) return;
+  var el = treePressEl;
+  var rect = el.getBoundingClientRect();
+  var ghost = el.cloneNode(true);
+  ghost.classList.add('drag-ghost');
+  ghost.classList.remove('drag-source');
+  ghost.style.width = rect.width + 'px';
+  ghost.style.left = (px - rect.width / 2) + 'px';
+  ghost.style.top = (py - rect.height / 2) + 'px';
+  document.body.appendChild(ghost);
+  el.classList.add('drag-source');
+  treeDrag = {
+    id: el.getAttribute('data-id'),
+    kind: el.getAttribute('data-kind'),
+    el: el,
+    ghost: ghost,
+    w: rect.width,
+    h: rect.height
+  };
+  try { if (navigator.vibrate) navigator.vibrate(12); } catch (e) { }
+}
+
+function moveTreeGhost(px, py) {
+  if (!treeDrag) return;
+  treeDrag.ghost.style.left = (px - treeDrag.w / 2) + 'px';
+  treeDrag.ghost.style.top = (py - treeDrag.h / 2) + 'px';
+}
+
+function clearTreeDrop() {
+  $$('.tag-row.drop-target').forEach(function (el) { el.classList.remove('drop-target'); });
+}
+
+function markTreeDrop(px, py) {
+  clearTreeDrop();
+  var over = document.elementFromPoint(px, py);
+  var row = over && over.closest ? over.closest('.tag-row') : null;
+  if (row && row !== treeDrag.el && row.getAttribute('data-kind') === treeDrag.kind) {
+    row.classList.add('drop-target');
+  }
+}
+
+function cancelTreeDrag() {
+  if (!treeDrag) return;
+  treeDrag.ghost.remove();
+  treeDrag.el.classList.remove('drag-source');
+  clearTreeDrop();
+  treeDrag = null;
+}
+
+function endTreeDrag(px, py) {
+  var d = treeDrag;
+  if (!d) return;
+
+  var over = document.elementFromPoint(px, py);
+  var targetRow = over && over.closest ? over.closest('.tag-row') : null;
+
+  d.ghost.remove();
+  clearTreeDrop();
+  treeDrag = null;
+  S.suppressUntil = Date.now() + 350;
+
+  d.el.classList.remove('drag-source');
+  if (!targetRow || targetRow === d.el) return;
+
+  var targetKind = targetRow.getAttribute('data-kind');
+  var dragged = nodeOf(d.id, d.kind);
+  var target = nodeOf(targetRow.getAttribute('data-id'), targetKind);
+  if (!dragged || !target) return;
+
+  // 位置只能放进位置；分类可以放进位置，也可以放进分类
+  if (d.kind === 'loc' && targetKind === 'cat') {
+    toast('位置只能放在位置下面');
+    return;
+  }
+
+  // 分类拖到位置上 → 直接放进这个位置（卧室 › 书架 › 书）
+  if (d.kind === 'cat' && targetKind === 'loc') {
+    dragged.parentId = target.id;
+    dragged.order = childrenAny(target.id).filter(function (x) { return x.node.id !== dragged.id; }).length;
+    DB.put('categories', dragged).then(reload).then(function () {
+      S.expanded['loc:' + target.id] = true;
+      render();
+      toast('已把「' + dragged.name + '」放进「' + target.name + '」');
+    }).catch(fatal);
+    return;
+  }
+
+  var kind = d.kind;
+  var store = kind === 'cat' ? 'categories' : 'locations';
+
+  // 不能拖到自己的子孙下面
+  if (subtreeOf(dragged.id, kind).indexOf(target.id) >= 0) {
+    toast('不能放到它自己的子项下面');
+    return;
+  }
+
+  var parentId = target.parentId || '';
+  var siblings = childrenOf(parentId, kind).filter(function (x) { return x.id !== dragged.id; });
+
+  var idx = -1;
+  siblings.forEach(function (x, i) { if (x.id === target.id) idx = i; });
+  if (idx < 0) idx = siblings.length;
+
+  var r = targetRow.getBoundingClientRect();
+  var after = py > r.top + r.height / 2;
+  var insertAt = after ? idx + 1 : idx;
+
+  siblings.splice(insertAt, 0, dragged);
+  dragged.parentId = parentId;
+
+  var jobs = [];
+  siblings.forEach(function (x, i) {
+    if (x.order === i) return;
+    x.order = i;
+    jobs.push(DB.put(store, x));
+  });
+  if (!jobs.length) jobs.push(DB.put(store, dragged));
+
+  Promise.all(jobs).then(reload).then(function () {
+    S.expanded[kind + ':' + parentId] = true;
+    render();
+    toast('已移到「' + (parentId ? nodeOf(parentId, kind).name : '最外层') + '」第 ' + (insertAt + 1) + ' 位');
+  }).catch(fatal);
+}
+
+function tagRowHTML(entry, depth, mode, counts) {
+  var t = entry.node;
+  var kind = entry.kind;
+  var kids = treeKids(kind, t.id);
+  var key = kind + ':' + t.id;
   var open = !!S.expanded[key];
-  var active = mode === 'cat' ? (S.cat === t.id) : (S.loc === t.id);
+  var active = kind === 'cat' ? (S.cat === t.id) : (S.loc === t.id);
 
   var h = '<div class="tag-row' + (active ? ' active' : '') + '"' +
-    ' data-longpress="1" data-kind="' + mode + '" data-id="' + t.id + '"' +
-    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + mode + '"' +
+    ' data-longpress="1" data-kind="' + kind + '" data-id="' + t.id + '"' +
+    ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + kind + '"' +
     ' style="padding-left:' + (8 + depth * 22) + 'px">';
 
   h += '<span class="tag-caret' + (kids.length ? '' : ' blank') + '"' +
     (kids.length ? ' data-act="toggle-node" data-key="' + key + '"' : '') + '>' +
     (kids.length ? (open ? '▾' : '▸') : '') + '</span>';
 
-  h += '<span class="tag-emoji">' + esc(mode === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
+  h += '<span class="tag-emoji">' + esc(kind === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
   h += '<span class="tag-name">' + esc(t.name) + '</span>';
-  h += '<span class="tag-count">' + countItemsUnder(t.id, mode, counts) + '</span>';
-  h += '<button class="tag-add" data-act="new-child" data-kind="' + mode + '" data-id="' + t.id + '" aria-label="在这里新建">＋</button>';
-  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + mode + '">✕</button>';
+  if (kind === 'cat' && t.parentId && !nodeOf(t.parentId, 'cat')) {
+    h += '<span class="tag-inloc">放位置里</span>';
+  }
+  h += '<span class="tag-count">' + countItemsUnder(t.id, kind, counts[kind] || {}) + '</span>';
+  h += '<button class="tag-add" data-act="new-child" data-kind="' + kind + '" data-id="' + t.id + '" aria-label="在这里新建">＋</button>';
+  h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + kind + '">✕</button>';
   h += '</div>';
 
   if (open) {
@@ -1004,12 +1202,22 @@ function tagRowHTML(t, depth, mode, counts) {
 }
 
 function parentOptions(mode, excludeId) {
-  var list = mode === 'cat' ? S.cats : S.locs;
-  var banned = excludeId ? subtreeOf(excludeId, mode) : [];
+  var banned = excludeId ? subtreeAny(excludeId) : [];
   var opts = [['', '（顶层）']];
-  list.filter(function (x) { return banned.indexOf(x.id) < 0; })
-    .sort(function (a, b) { return pathOf(a.id).localeCompare(pathOf(b.id), 'zh-CN'); })
-    .forEach(function (x) { opts.push([x.id, pathOf(x.id)]); });
+  var all = [];
+
+  if (mode === 'cat') {
+    S.cats.forEach(function (c) { all.push({ node: c, kind: 'cat' }); });
+    S.locs.forEach(function (l) { all.push({ node: l, kind: 'loc' }); });
+  } else {
+    S.locs.forEach(function (l) { all.push({ node: l, kind: 'loc' }); });
+  }
+
+  all.filter(function (x) { return banned.indexOf(x.node.id) < 0; })
+    .sort(function (a, b) { return pathOf(a.node.id).localeCompare(pathOf(b.node.id), 'zh-CN'); })
+    .forEach(function (x) {
+      opts.push([x.node.id, (x.kind === 'cat' ? '🏷️ ' : '📍 ') + pathOf(x.node.id)]);
+    });
   return opts;
 }
 
@@ -2934,7 +3142,7 @@ function bindLongPress() {
     clearTimeout(timer);
     timer = setTimeout(function () {
       timer = null;
-      S.suppressClick = true;
+      S.suppressUntil = Date.now() + 350;
       var kind = row.getAttribute('data-kind');
       var id = row.getAttribute('data-id');
       if (kind === 'cat') editTag(id, 'cat'); else editTag(id, 'loc');
@@ -2962,7 +3170,7 @@ function bindLongPress() {
 }
 
 function onDocClick(e) {
-  if (S.suppressClick) { S.suppressClick = false; return; }
+  if (Date.now() < (S.suppressUntil || 0)) return;
 
   var emojiBtn = e.target.closest('[data-emoji]');
   if (emojiBtn) { pickEmoji(emojiBtn); return; }
