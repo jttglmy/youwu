@@ -1,4 +1,4 @@
-const CACHE = 'youwu-v2';
+const CACHE = 'youwu-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -7,13 +7,16 @@ const ASSETS = [
   './db.js',
   './manifest.json',
   './manifest.webmanifest',
-  './icons/icon.svg',
-  './icons/icon-maskable.svg'
+  './icon.svg',
+  './icon-maskable.svg'
 ];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      // 逐个缓存，任何一个失败都不影响整体安装
+      .then((c) => Promise.all(ASSETS.map((url) => c.add(url).catch(() => null))))
+      .then(() => self.skipWaiting())
   );
 });
 
