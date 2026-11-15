@@ -74,7 +74,8 @@ var S = {
   form: null,
   current: null,
   ready: false,
-  lsMode: false
+  lsMode: false,
+  recentLocs: []
 };
 
 var urlCache = {};
@@ -90,6 +91,7 @@ function boot() {
   initDB()
     .then(seedIfEmpty)
     .then(reload)
+    .then(loadRecentLocs)
     .then(function () {
       S.ready = true;
       S.lsMode = DB.mode() === 'ls';
@@ -799,6 +801,14 @@ function openEditor(item) {
   $('#sheetTitle').textContent = item ? '编辑物品' : '添加物品';
   $('#sheetBody').innerHTML = editorHTML(f);
   $('#sheet').hidden = false;
+
+  if (item && (num(item.price) > 0 || item.date || (item.tags && item.tags.length) || item.note)) {
+    var box = $('#moreBox');
+    if (box) box.hidden = false;
+    var tg = document.querySelector('.more-toggle');
+    if (tg) tg.textContent = '收起更多信息';
+  }
+
   syncLock();
 
   loadEditorPhotos(f, function () { renderPhotoStrip(); });
@@ -818,34 +828,141 @@ function loadEditorPhotos(f, done) {
   });
 }
 
+function loadRecentLocs() {
+  return DB.get('meta', 'recentLocs').then(function (rec) {
+    S.recentLocs = (rec && rec.list) ? rec.list.slice(0, 10) : [];
+  }).catch(function () { S.recentLocs = []; });
+}
+
+function rememberLoc(id) {
+  if (!id) return;
+  var arr = (S.recentLocs || []).filter(function (x) { return x !== id; });
+  arr.unshift(id);
+  S.recentLocs = arr.slice(0, 10);
+  DB.put('meta', { key: 'recentLocs', list: S.recentLocs }).catch(function () { });
+}
+
 function editorHTML(f) {
+  var loc = f.locationId ? locName(f.locationId) : '';
+
   var h = '';
   h += '<div class="form-photos" id="photoStrip">' + photoStripHTML(f) + '</div>';
-  h += '<label class="field"><span>名称</span><input id="f-name" maxlength="60" placeholder="例：米白色羊毛大衣" value="' + esc(f.name) + '"></label>';
 
-  h += '<div class="field"><span>分类</span><div class="chip-row" id="catChips">' + catChipsHTML(f) + '</div></div>';
+  h += '<button type="button" class="loc-big' + (loc ? '' : ' empty') + '" id="locBtn" data-act="open-picker">' +
+    '<span class="loc-mark">📍</span>' +
+    '<span class="loc-body">' +
+    '<span class="loc-label">存放位置</span>' +
+    '<span class="loc-name">' + esc(loc || '点这里选择') + '</span>' +
+    '</span>' +
+    '<span class="loc-arrow">›</span>' +
+    '</button>';
 
-  h += '<div class="field"><span>存放位置</span><div class="select-row">' +
-    '<select id="f-loc">' + locOptionsHTML(f.locationId) + '</select>' +
-    '<button type="button" class="chip dashed" data-act="new-loc-inline">＋ 新建</button>' +
-    '</div></div>';
+  h += '<label class="field tight"><span>名称</span><input id="f-name" maxlength="60" placeholder="例：米白色羊毛大衣" value="' + esc(f.name) + '"></label>';
 
-  h += '<div class="field-row">' +
+  h += '<div class="field tight"><span>分类</span><div class="chip-row" id="catChips">' + catChipsHTML(f) + '</div></div>';
+
+  h += '<div class="more-wrap">' +
+    '<button type="button" class="more-toggle" data-act="toggle-more">更多信息（数量 / 价格 / 日期 / 标签 / 备注）</button>' +
+    '<div id="moreBox" hidden>' +
+    '<div class="field-row">' +
     '<label class="field"><span>数量</span><input id="f-qty" type="number" inputmode="numeric" min="1" step="1" value="' + qtyOf(f) + '"></label>' +
     '<label class="field"><span>单价（元）</span><input id="f-price" type="number" inputmode="decimal" min="0" step="0.01" placeholder="选填" value="' + (num(f.price) ? esc(f.price) : '') + '"></label>' +
+    '</div>' +
+    '<label class="field"><span>购入日期</span><input id="f-date" type="date" value="' + esc(f.date || '') + '"></label>' +
+    '<label class="field"><span>标签（逗号分隔，选填）</span><input id="f-tags" maxlength="90" placeholder="例：冬季, 常穿" value="' + esc((f.tags || []).join(', ')) + '"></label>' +
+    tagQuickHTML(f) +
+    '<label class="field"><span>备注</span><textarea id="f-note" rows="2" placeholder="颜色、尺码、放哪一格、谁送的……">' + esc(f.note || '') + '</textarea></label>' +
+    '</div>' +
     '</div>';
 
-  h += '<label class="field"><span>购入日期</span><input id="f-date" type="date" value="' + esc(f.date || '') + '"></label>';
-  h += '<label class="field"><span>备注</span><textarea id="f-note" rows="3" placeholder="颜色、尺码、放哪一格、谁送的……">' + esc(f.note || '') + '</textarea></label>';
-
-  h += '<label class="field"><span>标签（逗号分隔，选填）</span><input id="f-tags" maxlength="90" placeholder="例：冬季, 常穿" value="' + esc((f.tags || []).join(', ')) + '"></label>';
-  h += tagQuickHTML(f);
-
-  h += '<p class="hint">照片最多 9 张，保存时会自动压缩，不占太多空间。</p>';
   if (!f.id) {
-    h += '<button type="button" class="btn ghost block" data-act="save-continue">保存，继续添加下一件</button>';
+    h += '<button type="button" class="btn solid block" data-act="save-continue">保存，继续添加下一件</button>';
   }
+  h += '<p class="hint">照片会自动压缩，最多 9 张。</p>';
   return h;
+}
+
+/* ---------------- 位置选择器（格子视图） ---------------- */
+
+function openPicker() {
+  if (!S.form) return;
+  $('#picker').innerHTML = pickerHTML();
+  $('#picker').hidden = false;
+  syncLock();
+}
+
+function closePicker() {
+  $('#picker').hidden = true;
+  syncLock();
+}
+
+function pickerHTML() {
+  var cur = S.form ? S.form.locationId : '';
+  var counts = {};
+  S.items.forEach(function (it) {
+    if (it.locationId) counts[it.locationId] = (counts[it.locationId] || 0) + 1;
+  });
+
+  function tile(l) {
+    if (!l) return '';
+    return '<button class="loc-tile' + (l.id === cur ? ' on' : '') + '" data-act="pick-loc" data-id="' + l.id + '">' +
+      '<b>' + esc(l.name) + '</b>' +
+      '<span>' + (counts[l.id] || 0) + ' 件</span>' +
+      (l.id === cur ? '<i>✓</i>' : '') +
+      '</button>';
+  }
+
+  var recent = (S.recentLocs || []).map(function (id) {
+    return S.locs.filter(function (l) { return l.id === id; })[0];
+  }).filter(Boolean).slice(0, 4);
+
+  var h = '';
+  h += '<div class="picker-bar">' +
+    '<button class="link" data-act="close-picker">取消</button>' +
+    '<strong>选择存放位置</strong>' +
+    '<button class="link primary" data-act="new-loc-picker">＋ 新建</button>' +
+    '</div>';
+
+  h += '<div class="picker-body">';
+  if (recent.length) {
+    h += '<h4>最近用过</h4><div class="loc-grid">' + recent.map(tile).join('') + '</div>';
+  }
+  if (!S.locs.length) {
+    h += '<p class="hint">还没有位置。点右上角「＋ 新建」，比如「卧室-衣柜-第三层」。</p>';
+  } else {
+    h += '<h4>全部位置（' + S.locs.length + '）</h4><div class="loc-grid">' + S.locs.map(tile).join('') + '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function updateLocBtn() {
+  var btn = $('#locBtn');
+  if (!btn || !S.form) return;
+  var name = S.form.locationId ? locName(S.form.locationId) : '';
+  btn.classList.toggle('empty', !name);
+  var el = btn.querySelector('.loc-name');
+  if (el) el.textContent = name || '点这里选择';
+}
+
+function pickLoc(id) {
+  if (!S.form) return;
+  S.form.locationId = id;
+  rememberLoc(id);
+  updateLocBtn();
+  closePicker();
+}
+
+function toggleMore() {
+  var box = $('#moreBox');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  var btn = document.querySelector('.more-toggle');
+  if (btn) {
+    btn.textContent = box.hidden
+      ? '更多信息（数量 / 价格 / 日期 / 标签 / 备注）'
+      : '收起更多信息';
+  }
 }
 
 function tagQuickHTML(f) {
@@ -911,12 +1028,13 @@ function pickCat(id) {
 
 function closeSheet() {
   $('#sheet').hidden = true;
+  $('#picker').hidden = true;
   S.form = null;
   syncLock();
 }
 
 function syncLock() {
-  var locked = !$('#sheet').hidden || !$('#detail').hidden || !$('#dialog').hidden;
+  var locked = !$('#sheet').hidden || !$('#detail').hidden || !$('#dialog').hidden || !$('#picker').hidden;
   document.body.classList.toggle('locked', locked);
 }
 
@@ -1057,7 +1175,6 @@ function saveForm(keepOpen) {
     return;
   }
 
-  var locEl = $('#f-loc');
   var qtyEl = $('#f-qty');
   var priceEl = $('#f-price');
   var dateEl = $('#f-date');
@@ -1068,7 +1185,7 @@ function saveForm(keepOpen) {
     id: f.id || uid(),
     name: name,
     categoryId: f.categoryId || '',
-    locationId: locEl ? locEl.value : '',
+    locationId: f.locationId || '',
     qty: Math.max(1, Math.round(num(qtyEl ? qtyEl.value : 1) || 1)),
     price: num(priceEl ? priceEl.value : 0),
     date: dateEl ? dateEl.value : '',
@@ -1119,6 +1236,7 @@ function saveForm(keepOpen) {
 
   Promise.all(jobs).then(function () {
     var wasNew = !f.id;
+    rememberLoc(keepLoc);
     return reload().then(function () {
       if (keepOpen && wasNew) {
         var draft = {
@@ -2120,6 +2238,11 @@ function onDocClick(e) {
     case 'close-sheet': closeSheet(); break;
     case 'save-item': saveForm(false); break;
     case 'save-continue': saveForm(true); break;
+    case 'open-picker': openPicker(); break;
+    case 'close-picker': closePicker(); break;
+    case 'pick-loc': pickLoc(id); break;
+    case 'toggle-more': toggleMore(); break;
+    case 'new-loc-picker': newLocInline(); break;
     case 'qty-inc': changeQty(id, 1); break;
     case 'qty-dec': changeQty(id, -1); break;
     case 'filter-tag': setTagFilter(el.getAttribute('data-tag')); break;
@@ -2181,7 +2304,8 @@ function newLocInline() {
     return DB.put('locations', loc).then(function () {
       S.locs.push(loc);
       if (S.form) S.form.locationId = loc.id;
-      renderLocSelect();
+      updateLocBtn();
+      if (!$('#picker').hidden) $('#picker').innerHTML = pickerHTML();
       toast('已新建位置');
     });
   }).catch(fatal);
