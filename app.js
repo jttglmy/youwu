@@ -66,6 +66,9 @@ var SHAPE_OPTIONS = [
   ['tall', '瘦长（瓶罐）']
 ];
 
+/* 应用版本号：每次发版改这里 */
+var APP_VER = '1.7';
+
 var S = {
   tab: 'items',
   tagMode: 'cat',
@@ -382,6 +385,7 @@ function render() {
   } else {
     view.innerHTML = settingsHTML();
     showStorage();
+    showVerHint();
   }
   window.scrollTo(0, 0);
   updateBrand();
@@ -830,8 +834,44 @@ function settingsHTML() {
     '<button class="btn ghost danger block" data-act="wipe">清空所有数据</button></div>';
 
   h += '<div class="block about"><div class="about-logo">物</div>' +
-    '<p><b>有物</b> v1.0</p><p class="hint">把你拥有的每一件东西，都记下来。</p></div>';
+    '<p><b>有物</b> v' + APP_VER + '</p>' +
+    '<p class="hint">把你拥有的每一件东西，都记下来。</p>' +
+    '<p class="hint" id="verHint"></p>' +
+    '<button class="btn ghost block" data-act="force-update">强制更新到最新版</button>' +
+    '<p class="hint">只清网页缓存，不会动你的物品数据。</p></div>';
   return h;
+}
+
+function showVerHint() {
+  var el = $('#verHint');
+  if (!el) return;
+  var mode = '';
+  try { mode = DB.mode() === 'ls' ? '浏览器缓存（容量小）' : '浏览器数据库'; } catch (e) { }
+  el.textContent = '版本 ' + APP_VER + (mode ? ' · 数据存储：' + mode : '');
+}
+
+/* 清掉网页缓存与旧 Service Worker，然后重载；不碰物品数据 */
+function forceUpdate() {
+  toast('正在清理缓存…');
+  var jobs = [];
+  try {
+    if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+      jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+        return Promise.all(regs.map(function (r) { return r.unregister(); }));
+      }).catch(function () { }));
+    }
+  } catch (e) { }
+  try {
+    if (window.caches && window.caches.keys) {
+      jobs.push(caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      }).catch(function () { }));
+    }
+  } catch (e) { }
+
+  Promise.all(jobs).then(function () {
+    setTimeout(function () { location.reload(); }, 400);
+  });
 }
 
 function showStorage() {
@@ -2693,6 +2733,7 @@ function onDocClick(e) {
     case 'import-replace': pickImport('replace'); break;
     case 'import-csv': pickImport('csv'); break;
     case 'wipe': wipeAll(); break;
+    case 'force-update': forceUpdate(); break;
     case 'demo': loadDemo(); break;
     case 'dlg-ok': dialogOk(); break;
     case 'dlg-cancel': dialogCancel(); break;
