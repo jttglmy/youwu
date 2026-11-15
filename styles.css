@@ -139,9 +139,11 @@ ul { padding: 0; list-style: none; }
 .link.primary { color: var(--accent); }
 
 /* ---------- 物品卡片 ---------- */
-.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* 瀑布流：不同形状的卡片混排，像书架 */
+.grid { columns: 2; column-gap: 10px; }
 .card {
   position: relative; display: flex; flex-direction: column;
+  width: 100%; margin: 0 0 10px; break-inside: avoid;
   text-align: left; overflow: hidden;
   background: var(--card); border: 1px solid var(--line);
   border-radius: var(--radius); box-shadow: var(--shadow);
@@ -157,6 +159,32 @@ ul { padding: 0; list-style: none; }
   display: grid; place-items: center;
 }
 .ph-emoji { font-size: 34px; opacity: 0.4; }
+
+/* 分类形状 */
+.thumb { position: relative; }
+.thumb.shape-book {
+  aspect-ratio: 2 / 3;
+  border-radius: 2px 9px 9px 2px;
+  box-shadow: inset 12px 0 16px -14px rgba(0, 0, 0, 0.6);
+}
+.thumb.shape-book::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 11px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.3), rgba(255, 255, 255, 0.22) 65%, rgba(0, 0, 0, 0.05));
+  pointer-events: none;
+}
+.thumb.shape-garment { aspect-ratio: 3 / 4; border-radius: 22px 22px 14px 14px; }
+.thumb.shape-tall { aspect-ratio: 2 / 3; border-radius: 16px; }
+
+.gallery.shape-book .gallery-item { aspect-ratio: 2 / 3; }
+.gallery.shape-garment .gallery-item { aspect-ratio: 3 / 4; }
+.gallery.shape-tall .gallery-item { aspect-ratio: 2 / 3; }
+
+/* 自动去背景开关 */
+.cut-toggle {
+  display: flex; align-items: center; gap: 8px;
+  margin: -4px 0 10px; font-size: 12.5px; color: var(--ink-2);
+}
+.cut-toggle input { width: 18px; height: 18px; accent-color: var(--accent); flex: 0 0 18px; }
 .card-body { padding: 8px 10px 10px; }
 .card-name {
   font-size: 14px; font-weight: 600; line-height: 1.35;

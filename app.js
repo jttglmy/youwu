@@ -58,6 +58,14 @@ var DEFAULT_CATS = [
 
 var DEFAULT_LOCS = ['卧室', '客厅', '厨房', '书房', '储物间', '玄关'];
 
+/* 卡片形状 */
+var SHAPE_OPTIONS = [
+  ['square', '方形（默认）'],
+  ['book', '书脊（竖长）'],
+  ['garment', '衣服（竖长）'],
+  ['tall', '瘦长（瓶罐）']
+];
+
 var S = {
   tab: 'items',
   tagMode: 'cat',
@@ -75,7 +83,8 @@ var S = {
   current: null,
   ready: false,
   lsMode: false,
-  recentLocs: []
+  recentLocs: [],
+  autoCut: false
 };
 
 var urlCache = {};
@@ -92,6 +101,8 @@ function boot() {
     .then(seedIfEmpty)
     .then(reload)
     .then(loadRecentLocs)
+    .then(loadPrefs)
+    .then(migrateShapes)
     .then(function () {
       S.ready = true;
       S.lsMode = DB.mode() === 'ls';
@@ -182,6 +193,41 @@ function catName(id) {
 function catEmoji(id) {
   var c = S.cats.filter(function (x) { return x.id === id; })[0];
   return (c && c.emoji) ? c.emoji : '📦';
+}
+
+/* 分类形状：square 方形 / book 书脊 / garment 衣服 / tall 瘦长 */
+function catShape(id) {
+  var c = S.cats.filter(function (x) { return x.id === id; })[0];
+  return (c && c.shape) ? c.shape : 'square';
+}
+
+function guessShape(name) {
+  var n = String(name || '');
+  if (/书|册|杂志|漫画/.test(n)) return 'book';
+  if (/衣|裤|裙|外套|衬衫|卫衣|毛衣|围巾|袜|内衣/.test(n)) return 'garment';
+  if (/瓶|酒|香水|护肤|化妆|洗发|调料/.test(n)) return 'tall';
+  return 'square';
+}
+
+function loadPrefs() {
+  return DB.get('meta', 'settings').then(function (rec) {
+    S.autoCut = !!(rec && rec.autoCut);
+  }).catch(function () { });
+}
+
+function savePrefs() {
+  DB.put('meta', { key: 'settings', autoCut: !!S.autoCut }).catch(function () { });
+}
+
+/* 老数据没有 shape 的，按名字猜一个并写回 */
+function migrateShapes() {
+  var jobs = [];
+  S.cats.forEach(function (c) {
+    if (c.shape) return;
+    c.shape = guessShape(c.name);
+    jobs.push(DB.put('categories', c));
+  });
+  return jobs.length ? Promise.all(jobs) : null;
 }
 
 function locName(id) {
@@ -449,8 +495,9 @@ function onboardHTML() {
 function cardHTML(it) {
   var pid = (it.photoIds || [])[0];
   var qty = qtyOf(it);
+  var shape = catShape(it.categoryId);
   var h = '<button class="card" data-act="open" data-id="' + it.id + '">';
-  h += '<div class="thumb"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
+  h += '<div class="thumb shape-' + shape + '"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
     (pid ? '' : '<span class="ph-emoji">' + esc(catEmoji(it.categoryId)) + '</span>') + '</div>';
   h += '<div class="card-body">' +
     '<div class="card-name">' + esc(it.name) + '</div>' +
@@ -690,7 +737,7 @@ function openDetail(id) {
   h += '<div class="detail-scroll">';
 
   if (photos.length) {
-    h += '<div class="gallery">' + photos.map(function (pid) {
+    h += '<div class="gallery shape-' + catShape(it.categoryId) + '">' + photos.map(function (pid) {
       return '<div class="gallery-item" data-gphoto="' + pid + '"></div>';
     }).join('') + '</div>';
   } else {
@@ -847,6 +894,9 @@ function editorHTML(f) {
 
   var h = '';
   h += '<div class="form-photos" id="photoStrip">' + photoStripHTML(f) + '</div>';
+
+  h += '<label class="cut-toggle"><input type="checkbox" id="autoCut"' + (S.autoCut ? ' checked' : '') + '>' +
+    '<span>自动去掉背景（纯色背景效果最好）</span></label>';
 
   h += '<button type="button" class="loc-big' + (loc ? '' : ' empty') + '" id="locBtn" data-act="open-picker">' +
     '<span class="loc-mark">📍</span>' +
@@ -1121,8 +1171,122 @@ function canvasBlob(img, max, quality) {
   });
 }
 
+function canvasToBlob(canvas, quality, type) {
+  return new Promise(function (resolve, reject) {
+    canvas.toBlob(function (b) {
+      if (b) resolve(b);
+      else reject(new Error('压缩失败'));
+    }, type || 'image/jpeg', quality);
+  });
+}
+
+function scaleCanvas(src, max) {
+  var s = Math.min(1, max / Math.max(src.width, src.height));
+  var w = Math.max(1, Math.round(src.width * s));
+  var h = Math.max(1, Math.round(src.height * s));
+  var c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.getContext('2d').drawImage(src, 0, 0, w, h);
+  return c;
+}
+
+/* 简易抠图：取四边中位色当背景，从边缘做区域填充去掉相近颜色 */
+function cutoutCanvas(img, max) {
+  var w0 = img.naturalWidth || img.width;
+  var h0 = img.naturalHeight || img.height;
+  var s = Math.min(1, max / Math.max(w0, h0));
+  var w = Math.max(1, Math.round(w0 * s));
+  var h = Math.max(1, Math.round(h0 * s));
+
+  var canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  var ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+
+  var imageData;
+  try { imageData = ctx.getImageData(0, 0, w, h); } catch (e) { return null; }
+  var data = imageData.data;
+
+  var rs = [], gs = [], bs = [];
+  function push(x, y) {
+    var i = (y * w + x) * 4;
+    rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+  }
+  for (var x = 0; x < w; x += 2) { push(x, 0); push(x, h - 1); }
+  for (var y = 0; y < h; y += 2) { push(0, y); push(w - 1, y); }
+  if (!rs.length) return null;
+
+  function median(arr) {
+    arr.sort(function (a, b) { return a - b; });
+    return arr[Math.floor(arr.length / 2)];
+  }
+  var bgR = median(rs), bgG = median(gs), bgB = median(bs);
+
+  var tol = 52 * 52;
+  var visited = new Uint8Array(w * h);
+  var stack = [];
+
+  function consider(x, y) {
+    var p = y * w + x;
+    if (visited[p]) return;
+    var i = p * 4;
+    var dr = data[i] - bgR, dg = data[i + 1] - bgG, db = data[i + 2] - bgB;
+    if (dr * dr + dg * dg + db * db > tol) return;
+    visited[p] = 1;
+    stack.push(p);
+  }
+
+  for (var x2 = 0; x2 < w; x2++) { consider(x2, 0); consider(x2, h - 1); }
+  for (var y2 = 0; y2 < h; y2++) { consider(0, y2); consider(w - 1, y2); }
+
+  while (stack.length) {
+    var p = stack.pop();
+    var px = p % w;
+    var py = (p - px) / w;
+    if (px > 0) consider(px - 1, py);
+    if (px < w - 1) consider(px + 1, py);
+    if (py > 0) consider(px, py - 1);
+    if (py < h - 1) consider(px, py + 1);
+  }
+
+  var removed = 0;
+  for (var q = 0; q < w * h; q++) {
+    if (visited[q]) { data[q * 4 + 3] = 0; removed++; }
+  }
+
+  // 背景几乎没去掉（说明背景不纯），放弃抠图，避免把整张图毁掉
+  if (removed < w * h * 0.03) return null;
+  // 去掉太多（超过 92%），说明主体和背景一个颜色，也放弃
+  if (removed > w * h * 0.92) return null;
+
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 function processImage(file) {
   return loadBitmap(file).then(function (img) {
+    if (S.autoCut) {
+      var cut = cutoutCanvas(img, 1600);
+      if (cut) {
+        var thumbCanvas = scaleCanvas(cut, 480);
+        return Promise.all([
+          canvasToBlob(cut, 0.85, 'image/webp'),
+          canvasToBlob(thumbCanvas, 0.8, 'image/webp')
+        ]).then(function (arr) {
+          return {
+            full: arr[0],
+            thumb: arr[1],
+            w: cut.width,
+            h: cut.height,
+            url: URL.createObjectURL(arr[0]),
+            thumbUrl: URL.createObjectURL(arr[1]),
+            isNew: true
+          };
+        });
+      }
+    }
     return Promise.all([canvasBlob(img, 1600, 0.82), canvasBlob(img, 480, 0.7)]).then(function (arr) {
       return {
         full: arr[0],
@@ -1376,21 +1540,29 @@ function deleteItem(id) {
 
 function newTag() {
   var mode = S.tagMode;
+  var fields = [{
+    key: 'name',
+    label: '名称',
+    required: true,
+    placeholder: mode === 'cat' ? '例：围巾、厨房小家电' : '例：卧室-衣柜-第三层'
+  }];
+  if (mode === 'cat') {
+    fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: guessShape('') });
+  }
+
   askForm({
     title: mode === 'cat' ? '新建分类' : '新建位置',
-    fields: [{
-      key: 'name',
-      label: '名称',
-      required: true,
-      placeholder: mode === 'cat' ? '例：围巾、厨房小家电' : '例：卧室-衣柜-第三层'
-    }],
+    fields: fields,
     emoji: mode === 'cat',
     emojiValue: '📦',
     okText: '创建'
   }).then(function (r) {
     if (!r) return;
     var rec = { id: uid(), name: r.name, order: mode === 'cat' ? S.cats.length : S.locs.length, createdAt: Date.now() };
-    if (mode === 'cat') rec.emoji = r.emoji || '📦';
+    if (mode === 'cat') {
+      rec.emoji = r.emoji || '📦';
+      rec.shape = r.shape || guessShape(r.name);
+    }
     return DB.put(mode === 'cat' ? 'categories' : 'locations', rec).then(reload).then(function () {
       render();
       toast('已创建');
@@ -1404,9 +1576,14 @@ function editTag(id) {
   var t = list.filter(function (x) { return x.id === id; })[0];
   if (!t) return;
 
+  var fields = [{ key: 'name', label: '名称', value: t.name, required: true }];
+  if (mode === 'cat') {
+    fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: t.shape || 'square' });
+  }
+
   askForm({
     title: '编辑' + (mode === 'cat' ? '分类' : '位置'),
-    fields: [{ key: 'name', label: '名称', value: t.name, required: true }],
+    fields: fields,
     emoji: mode === 'cat',
     emojiValue: t.emoji || '📦',
     okText: '保存'
@@ -1414,6 +1591,7 @@ function editTag(id) {
     if (!r) return;
     t.name = r.name;
     if (mode === 'cat' && r.emoji) t.emoji = r.emoji;
+    if (mode === 'cat' && r.shape) t.shape = r.shape;
     return DB.put(mode === 'cat' ? 'categories' : 'locations', t).then(reload).then(function () {
       render();
       toast('已保存');
@@ -1654,16 +1832,17 @@ async function mergeJSON(data) {
       }
       if (hit) {
         catMap[c.id] = hit.id;
-        if (hit.name !== c.name || (c.emoji && c.emoji !== hit.emoji)) {
-          hit.name = c.name;
-          if (c.emoji) hit.emoji = c.emoji;
-          await DB.put('categories', hit);
-        }
+        var changed = false;
+        if (hit.name !== c.name) { hit.name = c.name; changed = true; }
+        if (c.emoji && c.emoji !== hit.emoji) { hit.emoji = c.emoji; changed = true; }
+        if (c.shape && c.shape !== hit.shape) { hit.shape = c.shape; changed = true; }
+        if (changed) await DB.put('categories', hit);
       } else {
         var nc = {
           id: c.id,
           name: c.name,
           emoji: c.emoji || '📦',
+          shape: c.shape || guessShape(c.name),
           order: c.order == null ? S.cats.length : c.order,
           createdAt: c.createdAt || Date.now()
         };
@@ -2099,6 +2278,12 @@ function dialogBodyHTML(opts) {
     h += '<label class="dlg-field"><span>' + esc(f.label) + '</span>';
     if (f.type === 'textarea') {
       h += '<textarea data-f="' + i + '" rows="2" placeholder="' + esc(f.placeholder || '') + '">' + esc(val) + '</textarea>';
+    } else if (f.type === 'select') {
+      h += '<select data-f="' + i + '">';
+      (f.options || []).forEach(function (o) {
+        h += '<option value="' + esc(o[0]) + '"' + (o[0] === val ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+      });
+      h += '</select>';
     } else {
       h += '<input data-f="' + i + '" type="' + (f.type || 'text') + '" value="' + esc(val) + '" placeholder="' + esc(f.placeholder || '') + '">';
     }
@@ -2209,6 +2394,10 @@ function onDocChange(e) {
     S.sort = t.value;
     $('#view').innerHTML = itemsHTML();
     hydrateThumbs();
+  } else if (t.id === 'autoCut') {
+    S.autoCut = !!t.checked;
+    savePrefs();
+    toast(S.autoCut ? '之后拍的照片会自动去掉背景' : '已关闭自动去背景');
   } else if (t.id === 'f-loc' && S.form) {
     S.form.locationId = t.value;
   }
