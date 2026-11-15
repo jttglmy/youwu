@@ -260,7 +260,7 @@ ul { padding: 0; list-style: none; }
 /* ---------- 底部导航 ---------- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   padding: 6px 0 calc(6px + env(safe-area-inset-bottom));
   background: var(--tabbar);
   -webkit-backdrop-filter: blur(14px);
@@ -399,7 +399,7 @@ ul { padding: 0; list-style: none; }
   width: 26px; height: 26px; flex: 0 0 26px;
   margin-left: -4px;
   border-radius: 8px;
-  color: var(--ink-2); font-size: 12px; line-height: 1;
+  color: var(--ink-2); font-size: 15px; font-weight: 700; line-height: 1;
   display: grid; place-items: center;
 }
 .tag-caret:not(.blank):active { background: var(--bg-soft); }
@@ -412,6 +412,13 @@ ul { padding: 0; list-style: none; }
 .tag-emoji { width: 30px; text-align: center; font-size: 19px; }
 .tag-name { flex: 1; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag-count { font-size: 12px; color: var(--ink-3); }
+.tag-add {
+  width: 30px; height: 30px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg);
+  color: var(--ink-2); font-size: 15px; line-height: 1;
+  display: grid; place-items: center;
+}
+.tag-add:active { background: var(--accent-soft); color: var(--accent); }
 .tag-del { width: 30px; height: 30px; border-radius: 50%; color: var(--ink-3); font-size: 14px; display: grid; place-items: center; }
 .tag-del:active { background: var(--bg-soft); }
 

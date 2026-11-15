@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.5';
+var APP_VER = '2.6';
 
 var S = {
   tab: 'items',
@@ -405,7 +405,7 @@ function render() {
   if (!S.ready) return;
   var view = $('#view');
   $('#searchWrap').hidden = S.tab !== 'items';
-  $('#fab').hidden = S.tab !== 'items';
+  $('#fab').hidden = !(S.tab === 'items' || S.tab === 'cats' || S.tab === 'locs');
   $$('.tab').forEach(function (b) {
     b.classList.toggle('active', b.getAttribute('data-tab') === S.tab);
   });
@@ -413,8 +413,10 @@ function render() {
   if (S.tab === 'items') {
     view.innerHTML = itemsHTML();
     hydrateThumbs();
-  } else if (S.tab === 'tags') {
-    view.innerHTML = tagsHTML();
+  } else if (S.tab === 'cats') {
+    view.innerHTML = treeHTML('cat');
+  } else if (S.tab === 'locs') {
+    view.innerHTML = treeHTML('loc');
   } else {
     view.innerHTML = settingsHTML();
     showStorage();
@@ -944,8 +946,7 @@ function getPhotoUrl(pid, kind) {
 
 /* ---------------- 分类 / 位置 ---------------- */
 
-function tagsHTML() {
-  var mode = S.tagMode === 'loc' ? 'loc' : 'cat';
+function treeHTML(mode) {
   var list = mode === 'cat' ? S.cats : S.locs;
   var counts = {};
   S.items.forEach(function (i) {
@@ -953,14 +954,11 @@ function tagsHTML() {
     if (k) counts[k] = (counts[k] || 0) + 1;
   });
 
-  var h = '<div class="seg">' +
-    '<button class="seg-btn' + (mode === 'cat' ? ' on' : '') + '" data-act="tag-mode" data-mode="cat">分类</button>' +
-    '<button class="seg-btn' + (mode === 'loc' ? ' on' : '') + '" data-act="tag-mode" data-mode="loc">位置</button>' +
-    '</div>';
-
-  h += '<p class="hint">点一下筛选，长按修改；左边的箭头展开子项。' +
-    (mode === 'cat' ? '分类下面可以再建子分类。' : '位置下面可以再建子位置，比如 卧室 › 衣柜 › 第三层。') +
-    '</p>';
+  var h = '<p class="hint">' +
+    (mode === 'cat'
+      ? '点一下看这类物品，左边的箭头展开小分类，右边的「＋」在它下面再建一个小分类。'
+      : '点一下看放在这里的东西，箭头展开子位置，「＋」在它下面新建子位置（比如衣柜、抽屉、书架）。') +
+    '长按可以改名或换上级。</p>';
 
   h += '<div class="tag-list">';
   var roots = list.filter(function (x) {
@@ -986,7 +984,7 @@ function tagRowHTML(t, depth, mode, counts) {
   var h = '<div class="tag-row' + (active ? ' active' : '') + '"' +
     ' data-longpress="1" data-kind="' + mode + '" data-id="' + t.id + '"' +
     ' data-act="go-tag" data-tag="' + t.id + '" data-mode="' + mode + '"' +
-    ' style="padding-left:' + (12 + depth * 22) + 'px">';
+    ' style="padding-left:' + (8 + depth * 22) + 'px">';
 
   h += '<span class="tag-caret' + (kids.length ? '' : ' blank') + '"' +
     (kids.length ? ' data-act="toggle-node" data-key="' + key + '"' : '') + '>' +
@@ -995,6 +993,7 @@ function tagRowHTML(t, depth, mode, counts) {
   h += '<span class="tag-emoji">' + esc(mode === 'cat' ? (t.emoji || '🏷️') : '📍') + '</span>';
   h += '<span class="tag-name">' + esc(t.name) + '</span>';
   h += '<span class="tag-count">' + countItemsUnder(t.id, mode, counts) + '</span>';
+  h += '<button class="tag-add" data-act="new-child" data-kind="' + mode + '" data-id="' + t.id + '" aria-label="在这里新建">＋</button>';
   h += '<button class="tag-del" data-act="del-tag" data-id="' + t.id + '" data-kind="' + mode + '">✕</button>';
   h += '</div>';
 
@@ -1228,8 +1227,10 @@ function openEditor(item) {
   if (item) {
     f = JSON.parse(JSON.stringify(item));
   } else {
+    var defCat = (S.cat && S.cat !== 'all' && S.cat !== 'none') ? S.cat : '';
+    var defLoc = (S.loc && S.loc !== 'all' && S.loc !== 'none') ? S.loc : '';
     f = {
-      id: '', name: '', categoryId: '', locationId: '', qty: 1, price: '',
+      id: '', name: '', categoryId: defCat, locationId: defLoc, qty: 1, price: '',
       date: '', note: '', photoIds: [], loan: null, history: [], createdAt: 0, updatedAt: 0,
       tags: []
     };
@@ -2023,19 +2024,19 @@ function deleteItem(id) {
 
 /* ---------------- 分类 / 位置维护 ---------------- */
 
-function newTag(modeArg) {
+function newTag(modeArg, parentArg) {
   var mode = modeArg || S.tagMode;
   var fields = [{
     key: 'name',
     label: '名称',
     required: true,
-    placeholder: mode === 'cat' ? '例：外套、厨房小家电' : '例：衣柜、第三层'
+    placeholder: mode === 'cat' ? '例：外套、厨房小家电' : '例：衣柜、抽屉、书架'
   }, {
     key: 'parentId',
     label: '放在哪个下面',
     type: 'select',
     options: parentOptions(mode, ''),
-    value: ''
+    value: parentArg || ''
   }];
   if (mode === 'cat') {
     fields.push({ key: 'shape', label: '卡片形状', type: 'select', options: SHAPE_OPTIONS, value: 'square' });
@@ -3050,6 +3051,7 @@ function onDocClick(e) {
     }
     case 'tag-mode': S.tagMode = el.getAttribute('data-mode'); render(); break;
     case 'new-tag': newTag(el.getAttribute('data-mode') || S.tagMode); break;
+    case 'new-child': newTag(el.getAttribute('data-kind') || S.tagMode, el.getAttribute('data-id')); break;
     case 'edit-tag': editTag(id); break;
     case 'del-tag': delTag(id, el.getAttribute('data-kind')); break;
     case 'how-install': showInstallHelp(); break;

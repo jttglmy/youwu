@@ -1,5 +1,5 @@
-﻿const CACHE = 'youwu-v16';
-const V = '2.5';
+﻿const CACHE = 'youwu-v17';
+const V = '2.6';
 const ASSETS = [
   './',
   './index.html',
