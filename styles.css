@@ -586,50 +586,94 @@ ul { padding: 0; list-style: none; }
 .nav-btn:disabled { opacity: 0.38; }
 .nav-pos { font-size: 12px; color: var(--ink-3); min-width: 56px; text-align: center; }
 
-/* ---------- 书架视图 ---------- */
-.shelf-block { margin-bottom: 20px; }
-.shelf-label {
+@keyframes slideInLeft {
+  from { opacity: 0.35; transform: translateX(20px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slideInRight {
+  from { opacity: 0.35; transform: translateX(-20px); }
+  to { opacity: 1; transform: none; }
+}
+.slide-left { animation: slideInLeft 0.2s ease; }
+.slide-right { animation: slideInRight 0.2s ease; }
+
+/* ---------- 家具视图：书架 / 衣柜 / 鞋柜 / 置物架 ---------- */
+.fur { margin-bottom: 26px; }
+.fur-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  margin: 0 4px 8px;
+  margin: 0 6px 8px;
 }
-.shelf-label b { font-size: 13px; font-weight: 650; color: var(--ink); }
-.shelf-label span { font-size: 11px; color: var(--ink-3); }
-.shelf-items {
-  display: flex; align-items: flex-end; gap: 8px;
-  overflow-x: auto; padding: 0 4px 3px;
-  scrollbar-width: none;
-}
-.shelf-items::-webkit-scrollbar { display: none; }
-.shelf-item {
-  flex: 0 0 auto; width: 78px;
-  display: flex; flex-direction: column; gap: 4px;
+.fur-head b { font-size: 13.5px; font-weight: 650; color: var(--ink); }
+.fur-head span { font-size: 11px; color: var(--ink-3); }
+.fur-body { position: relative; padding: 0 2px; }
+
+.fur-row { display: flex; align-items: flex-end; gap: 3px; padding: 0 6px; }
+.fur-item {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
   background: none; border: 0; padding: 0; text-align: center;
 }
-.shelf-item.shape-book { width: 54px; }
-.shelf-item.shape-tall { width: 62px; }
-.shelf-photo {
+.fur-photo {
   display: grid; place-items: center;
-  width: 100%; border-radius: 6px;
-  border: 1px solid var(--line);
   background-color: var(--bg-soft);
   background-position: center; background-size: cover; background-repeat: no-repeat;
-  font-size: 20px; opacity: 1;
+  border: 1px solid var(--line);
+  font-size: 16px;
 }
-.shelf-item.shape-book .shelf-photo {
-  height: 106px; border-radius: 2px 6px 6px 2px;
-  box-shadow: inset 9px 0 12px -9px rgba(0, 0, 0, 0.5);
-}
-.shelf-item.shape-garment .shelf-photo { height: 96px; border-radius: 12px 12px 6px 6px; }
-.shelf-item.shape-square .shelf-photo { height: 76px; }
-.shelf-item.shape-tall .shelf-photo { height: 100px; border-radius: 8px; }
-.shelf-name {
-  font-size: 9.5px; line-height: 1.2; color: var(--ink-2);
+.fur-name {
+  font-size: 9px; color: var(--ink-2); max-width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.shelf-board {
-  height: 9px; margin: 0 2px; border-radius: 3px;
+
+/* 书架：书紧密竖立，高矮略不同 */
+.fur-bookshelf .fur-item { width: 58px; }
+.fur-bookshelf .fur-photo {
+  width: 58px; height: 112px;
+  border-radius: 2px 5px 5px 2px;
+  box-shadow: inset 7px 0 9px -8px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.fur-bookshelf .fur-item:nth-child(3n) .fur-photo { height: 105px; }
+.fur-bookshelf .fur-item:nth-child(4n) .fur-photo { height: 118px; }
+.fur-bookshelf .fur-name { display: none; }
+
+/* 衣柜：横杆 + 挂着的衣服 */
+.fur-rail {
+  position: relative;
+  height: 7px; margin: 2px 6px 0; border-radius: 4px;
+  background: linear-gradient(180deg, #e0cca6, #a98d63);
+  box-shadow: 0 3px 6px -3px rgba(0, 0, 0, 0.4);
+}
+.fur-rail::before, .fur-rail::after {
+  content: ''; position: absolute; top: -3px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #b99a6f;
+}
+.fur-rail::before { left: -2px; }
+.fur-rail::after { right: -2px; }
+
+.fur-wardrobe .fur-row { align-items: flex-start; gap: 8px; padding: 0 8px 12px; }
+.fur-wardrobe .fur-item { width: 74px; }
+.fur-wardrobe .fur-item::before {
+  content: ''; width: 2px; height: 9px; background: #b99a6f; border-radius: 1px;
+}
+.fur-wardrobe .fur-photo { width: 74px; height: 100px; border-radius: 12px 12px 6px 6px; }
+.fur-wardrobe .fur-name { display: none; }
+
+/* 鞋柜：鞋子平摆 */
+.fur-shoerack .fur-item { width: 56px; }
+.fur-shoerack .fur-photo { width: 56px; height: 50px; border-radius: 8px 8px 4px 4px; }
+.fur-shoerack .fur-name { display: none; }
+
+/* 置物架 */
+.fur-cabinet .fur-item { width: 64px; }
+.fur-cabinet .fur-photo { width: 64px; height: 64px; border-radius: 10px; }
+.fur-cabinet .fur-name { font-size: 9px; }
+
+/* 木板 */
+.fur-board {
+  height: 10px; margin: 0 2px 8px; border-radius: 2px;
   background: linear-gradient(180deg, var(--wood), var(--wood-dark));
-  box-shadow: 0 7px 12px -8px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 7px 12px -8px rgba(0, 0, 0, 0.5);
 }
 
 @media (min-width: 720px) {

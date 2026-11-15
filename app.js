@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '1.8';
+var APP_VER = '2.0';
 
 var S = {
   tab: 'items',
@@ -542,40 +542,79 @@ function itemsHTML() {
   return h;
 }
 
-/* ---------------- 书架视图 ---------------- */
+/* ---------------- 家具视图（书架 / 衣柜 / 鞋柜 / 置物架） ---------------- */
+
+/* 家具类型：按分类自动判断 */
+function furnitureOf(cat) {
+  var name = cat ? cat.name : '';
+  var shape = cat ? cat.shape : 'square';
+  if (/鞋|靴/.test(name)) return 'shoerack';
+  if (shape === 'book' || /书|册|杂志|漫画/.test(name)) return 'bookshelf';
+  if (shape === 'garment' || /衣|裤|裙|外套|卫衣|毛衣|围巾/.test(name)) return 'wardrobe';
+  return 'cabinet';
+}
+
+var FUR_ROWS = { bookshelf: 6, wardrobe: 4, shoerack: 5, cabinet: 5 };
+
+/* 找到最顶层分类，子分类的东西也归到同一个家具里 */
+function rootCategoryId(catId) {
+  var c = nodeOf(catId, 'cat');
+  var guard = 0;
+  while (c && c.parentId && guard < 20) {
+    c = nodeOf(c.parentId, 'cat');
+    guard++;
+  }
+  return c ? c.id : '';
+}
 
 function shelfHTML(list) {
-  var byLoc = {};
+  var groups = {};
   list.forEach(function (it) {
-    var k = it.locationId || '';
-    if (!byLoc[k]) byLoc[k] = [];
-    byLoc[k].push(it);
+    var key = rootCategoryId(it.categoryId) || '';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(it);
   });
 
-  var order = S.locs.map(function (l) { return l.id; }).filter(function (id) { return byLoc[id]; });
-  if (byLoc['']) order.push('');
+  var order = [];
+  S.cats.forEach(function (c) {
+    if (!c.parentId && groups[c.id]) order.push(c.id);
+  });
+  if (groups['']) order.push('');
 
   var h = '';
-  order.forEach(function (id) {
-    var items = byLoc[id];
-    h += '<div class="shelf-block">';
-    h += '<div class="shelf-label"><b>' + (id ? esc(locName(id)) : '未记位置') + '</b><span>' + items.length + ' 件</span></div>';
-    h += '<div class="shelf-items">';
-    items.forEach(function (it) { h += shelfItemHTML(it); });
-    h += '</div>';
-    h += '<div class="shelf-board"></div>';
-    h += '</div>';
-  });
+  order.forEach(function (id) { h += furnitureHTML(id, groups[id]); });
   return h;
 }
 
-function shelfItemHTML(it) {
+function furnitureHTML(catId, items) {
+  var cat = catId ? nodeOf(catId, 'cat') : null;
+  var type = furnitureOf(cat);
+  var perRow = FUR_ROWS[type] || 5;
+  var title = cat ? ((cat.emoji ? cat.emoji + ' ' : '') + cat.name) : '未分类';
+
+  var h = '<div class="fur fur-' + type + '">';
+  h += '<div class="fur-head"><b>' + esc(title) + '</b><span>' + items.length + ' 件</span></div>';
+  h += '<div class="fur-body">';
+
+  for (var i = 0; i < items.length; i += perRow) {
+    var chunk = items.slice(i, i + perRow);
+    if (type === 'wardrobe') h += '<div class="fur-rail"></div>';
+    h += '<div class="fur-row">';
+    chunk.forEach(function (it) { h += furItemHTML(it); });
+    h += '</div>';
+    if (type !== 'wardrobe') h += '<div class="fur-board"></div>';
+  }
+
+  h += '</div></div>';
+  return h;
+}
+
+function furItemHTML(it) {
   var pid = (it.photoIds || [])[0];
-  var shape = catShape(it.categoryId);
-  var h = '<button class="shelf-item shape-' + shape + '" data-act="open" data-id="' + it.id + '">';
-  h += '<span class="shelf-photo"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
+  var h = '<button class="fur-item" data-act="open" data-id="' + it.id + '">';
+  h += '<span class="fur-photo"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
     (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>';
-  h += '<span class="shelf-name">' + esc(it.name) + '</span>';
+  h += '<span class="fur-name">' + esc(it.name) + '</span>';
   h += '</button>';
   return h;
 }
@@ -893,8 +932,7 @@ function openDetail(id) {
   if (!it) { toast('这件东西已经不在了'); return; }
   S.current = it.id;
 
-  var navList = filteredItems();
-  if (!navList.length) navList = S.items;
+  var navList = navListFor(it);
   S.navIds = navList.map(function (x) { return x.id; });
   S.navIndex = S.navIds.indexOf(it.id);
   if (S.navIndex < 0) { S.navIds = [it.id]; S.navIndex = 0; }
@@ -975,9 +1013,9 @@ function openDetail(id) {
   h += '</div>';
 
   h += '<div class="detail-nav">' +
-    '<button class="nav-btn" data-act="prev-item"' + (S.navIndex <= 0 ? ' disabled' : '') + '>‹ 上一件</button>' +
+    '<button class="nav-btn" data-act="prev-item"' + (S.navIds.length <= 1 ? ' disabled' : '') + '>‹ 上一件</button>' +
     '<span class="nav-pos">' + (S.navIndex + 1) + ' / ' + S.navIds.length + '</span>' +
-    '<button class="nav-btn" data-act="next-item"' + (S.navIndex >= S.navIds.length - 1 ? ' disabled' : '') + '>下一件 ›</button>' +
+    '<button class="nav-btn" data-act="next-item"' + (S.navIds.length <= 1 ? ' disabled' : '') + '>下一件 ›</button>' +
     '</div>';
 
   var box = $('#detail');
@@ -1265,43 +1303,80 @@ function closeSheet() {
   syncLock();
 }
 
-/* 上下件切换 */
-function navItem(delta) {
-  if (!S.navIds || !S.navIds.length) return;
-  var next = S.navIndex + delta;
-  if (next < 0) { toast('已经是第一件了'); return; }
-  if (next >= S.navIds.length) { toast('已经是最后一件了'); return; }
-  openDetail(S.navIds[next]);
-  var sc = $('#detail .detail-scroll');
-  if (sc) sc.scrollTop = 0;
+/* 上一件/下一件 的候选范围：不跨分类 */
+function navListFor(it) {
+  var list;
+
+  if (S.q.trim() || S.cat !== 'all') {
+    list = filteredItems();
+  } else {
+    list = S.items.filter(function (x) {
+      if ((x.categoryId || '') !== (it.categoryId || '')) return false;
+      if (S.loc !== 'all') {
+        if (S.loc === 'none') { if (x.locationId) return false; }
+        else if (subtreeOf(S.loc, 'loc').indexOf(x.locationId) < 0) return false;
+      }
+      if (S.tag !== 'all' && tagsOf(x).indexOf(S.tag) < 0) return false;
+      return true;
+    });
+    list.sort(sortComparator(S.sort));
+  }
+
+  if (!list.length) list = [it];
+  return list;
 }
 
-/* 详情页左右滑动切换 */
+/* 上下件切换（首尾循环） */
+function navItem(delta) {
+  var n = S.navIds ? S.navIds.length : 0;
+  if (!n || n <= 1) return;
+
+  var next = (S.navIndex + delta + n) % n;
+  openDetail(S.navIds[next]);
+
+  var sc = $('#detail .detail-scroll');
+  if (sc) {
+    sc.scrollTop = 0;
+    sc.classList.remove('slide-left', 'slide-right');
+    void sc.offsetWidth;
+    sc.classList.add(delta > 0 ? 'slide-left' : 'slide-right');
+    setTimeout(function () { sc.classList.remove('slide-left', 'slide-right'); }, 260);
+  }
+}
+
+/* 详情页左右滑动切换：跟手触发，不需要滑很远 */
 function bindDetailSwipe() {
   var el = document.getElementById('detail');
   if (!el) return;
   var startX = 0, startY = 0, tracking = false;
 
+  function galleryScrolls(target) {
+    var g = target && target.closest ? target.closest('.gallery') : null;
+    if (!g) return false;
+    return g.scrollWidth > g.clientWidth + 8;
+  }
+
   el.addEventListener('touchstart', function (e) {
     if (e.touches.length !== 1) { tracking = false; return; }
-    if (e.target.closest && (e.target.closest('.gallery') || e.target.closest('button'))) {
-      tracking = false;
-      return;
-    }
+    if (e.target.closest && e.target.closest('button')) { tracking = false; return; }
+    if (galleryScrolls(e.target)) { tracking = false; return; }
     tracking = true;
     startX = e.touches[0].clientX;
     startY = e.touches[0].clientY;
   }, { passive: true });
 
-  el.addEventListener('touchend', function (e) {
+  el.addEventListener('touchmove', function (e) {
     if (!tracking) return;
-    tracking = false;
-    var t = e.changedTouches[0];
-    var dx = t.clientX - startX;
-    var dy = t.clientY - startY;
-    if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return;
-    navItem(dx < 0 ? 1 : -1);
+    var dx = e.touches[0].clientX - startX;
+    var dy = e.touches[0].clientY - startY;
+    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.25) {
+      tracking = false;
+      navItem(dx < 0 ? 1 : -1);
+    }
   }, { passive: true });
+
+  el.addEventListener('touchend', function () { tracking = false; }, { passive: true });
+  el.addEventListener('touchcancel', function () { tracking = false; }, { passive: true });
 }
 
 function syncLock() {
