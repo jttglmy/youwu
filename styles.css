@@ -423,6 +423,31 @@ ul { padding: 0; list-style: none; }
   padding: 1px 4px;
   max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 树里直接显示这个位置 / 分类里的物品 */
+.loc-items {
+  display: flex; gap: 8px; overflow-x: auto;
+  padding: 4px 8px 12px 38px;
+  scrollbar-width: none;
+}
+.loc-items::-webkit-scrollbar { display: none; }
+.loc-item {
+  flex: 0 0 auto; width: 62px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: none; border: 0; padding: 0;
+}
+.loc-thumb {
+  width: 58px; height: 58px; border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft) center/cover no-repeat;
+  display: grid; place-items: center;
+  font-size: 18px;
+}
+.loc-plus { border-style: dashed; color: var(--ink-3); font-size: 20px; }
+.loc-name {
+  font-size: 9px; color: var(--ink-2); max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tag-count { font-size: 12px; color: var(--ink-3); }
 .tag-add {
   width: 30px; height: 30px; border-radius: 8px;

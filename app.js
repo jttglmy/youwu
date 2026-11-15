@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /* =========================================================
    有物 · 我的物品清单
@@ -67,7 +67,7 @@ var SHAPE_OPTIONS = [
 ];
 
 /* 应用版本号：每次发版改这里 */
-var APP_VER = '2.9';
+var APP_VER = '2.10';
 
 var S = {
   tab: 'items',
@@ -416,8 +416,10 @@ function render() {
     hydrateThumbs();
   } else if (S.tab === 'cats') {
     view.innerHTML = treeHTML('cat');
+    hydrateThumbs();
   } else if (S.tab === 'locs') {
     view.innerHTML = treeHTML('loc');
+    hydrateThumbs();
   } else {
     view.innerHTML = settingsHTML();
     showStorage();
@@ -988,6 +990,32 @@ function treeRoots(mode) {
   return out;
 }
 
+/* 这个位置 / 分类里直接放的物品 */
+function nodeItems(kind, id) {
+  return S.items.filter(function (it) {
+    return (kind === 'cat' ? it.categoryId : it.locationId) === id;
+  });
+}
+
+function itemsStripHTML(kind, id, depth) {
+  var items = nodeItems(kind, id);
+  if (!items.length) return '';
+
+  var pad = 8 + (depth || 0) * 22 + 30;
+  var h = '<div class="loc-items" style="padding-left:' + pad + 'px">';
+  items.forEach(function (it) {
+    var pid = (it.photoIds || [])[0];
+    h += '<button class="loc-item" data-act="open" data-id="' + it.id + '">' +
+      '<span class="loc-thumb"' + (pid ? ' data-photo="' + pid + '"' : '') + '>' +
+      (pid ? '' : esc(catEmoji(it.categoryId))) + '</span>' +
+      '<span class="loc-name">' + esc(it.name) + '</span></button>';
+  });
+  h += '<button class="loc-item loc-add" data-act="add-here" data-kind="' + kind + '" data-id="' + id + '">' +
+    '<span class="loc-thumb loc-plus">＋</span><span class="loc-name">添加</span></button>';
+  h += '</div>';
+  return h;
+}
+
 /* 位置可以包含位置和分类；分类只包含分类 */
 function treeKids(kind, id) {
   if (kind === 'loc') return childrenAny(id);
@@ -1196,6 +1224,7 @@ function tagRowHTML(entry, depth, mode, counts) {
   h += '</div>';
 
   if (open) {
+    h += itemsStripHTML(kind, t.id, depth);
     kids.forEach(function (k) { h += tagRowHTML(k, depth + 1, mode, counts); });
   }
   return h;
@@ -1430,13 +1459,15 @@ function closeDetail() {
 
 /* ---------------- 编辑面板 ---------------- */
 
-function openEditor(item) {
+function openEditor(item, preset) {
   var f;
   if (item) {
     f = JSON.parse(JSON.stringify(item));
   } else {
-    var defCat = (S.cat && S.cat !== 'all' && S.cat !== 'none') ? S.cat : '';
-    var defLoc = (S.loc && S.loc !== 'all' && S.loc !== 'none') ? S.loc : '';
+    var defCat = (preset && preset.categoryId) ||
+      ((S.cat && S.cat !== 'all' && S.cat !== 'none') ? S.cat : '');
+    var defLoc = (preset && preset.locationId) ||
+      ((S.loc && S.loc !== 'all' && S.loc !== 'none') ? S.loc : '');
     f = {
       id: '', name: '', categoryId: defCat, locationId: defLoc, qty: 1, price: '',
       date: '', note: '', photoIds: [], loan: null, history: [], createdAt: 0, updatedAt: 0,
@@ -3262,6 +3293,12 @@ function onDocClick(e) {
     case 'tag-mode': S.tagMode = el.getAttribute('data-mode'); render(); break;
     case 'new-tag': newTag(el.getAttribute('data-mode') || S.tagMode); break;
     case 'new-child': newTag(el.getAttribute('data-kind') || S.tagMode, el.getAttribute('data-id')); break;
+    case 'add-here': {
+      var hk = el.getAttribute('data-kind');
+      var hid = el.getAttribute('data-id');
+      openEditor(null, hk === 'cat' ? { categoryId: hid } : { locationId: hid });
+      break;
+    }
     case 'edit-tag': editTag(id); break;
     case 'del-tag': delTag(id, el.getAttribute('data-kind')); break;
     case 'how-install': showInstallHelp(); break;
